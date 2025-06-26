@@ -1,0 +1,484 @@
+---
+title: "Combined_pipline_support"
+author: "Lukas"
+date: "2025-03-20"
+output:
+  html_document: default
+  pdf_document: default
+---
+# Setup, Read Inspection, and Loading
+## Setup
+change “first_time” to TRUE and run the setup code_block. Make sure all the packages are installed BiocManager::install("Package_Name")
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(bitmapType="cairo")
+library(tidyverse)
+library(conflicted)
+library(Biostrings)
+library(readxl)
+library(conflicted)
+library(ShortRead)
+conflicts_prefer(dplyr::rename)
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::count)
+
+# User Options
+###############
+
+output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/test"
+first_time <- FALSE
+# End of User Options
+###############
+
+make_clean_dir <- function(base_path, sub_path) {
+  
+  full_path <- paste0(base_path, "/", sub_path)
+  
+  full_path <- gsub("///", "/", full_path, fixed = TRUE)
+  full_path <- gsub("//", "/", full_path, fixed = TRUE)
+  
+  if (!dir.exists(full_path)) {
+    dir.create(full_path, recursive = TRUE)
+  }
+  return(full_path)
+}
+get_file_path <- function(folder_path, file_name){
+  full_path <- paste0(folder_path, "/",file_name)
+  full_path <- gsub("///", "/", full_path, fixed = TRUE)
+  full_path <- gsub("//", "/", full_path, fixed = TRUE)
+  return(full_path)
+}
+
+genome_output_folder <- make_clean_dir(output_folder, "/ref/NOPE/")
+grouped_output_folder <- make_clean_dir(output_folder, "/grouped/")
+rds_output_folder <- make_clean_dir(output_folder, "/rds/")
+```
+
+## Checking sequences to prepare for reference building
+Change the raw_path to the path where your fastq file is located, and then then run the read_raw block to have a look at your reads. This will also tell you the most common read length, which will be used for calculating SJDB_OVERHANG.
+```{r read_raw, eval=FALSE}
+raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/QC_filtered/I_L1_1.fastq.gz"
+
+fastq_reader <- FastqStreamer(raw_path, n = 1000000)
+fastq_data <- yield(fastq_reader)
+close(fastq_reader)
+
+# Extract sequences
+sequences <- sread(fastq_data)
+for (i in seq(50, 100, by = 5)) {
+  print(sequences[i:(i+4)])
+}
+freq_matrix <- consensusMatrix(sequences, as.prob = TRUE)
+# Keep only A, C, G, T, N rows
+freq_matrix <- freq_matrix[c("A", "C", "G", "T", "N"), , drop = FALSE]
+
+# Convert to numeric, round to 3 decimal places, and prevent scientific notation
+freq_matrix <- round(freq_matrix, 3)
+options(scipen = 999)  # Prevent scientific notation
+# Get sequence lengths
+seq_lengths <- width(sread(fastq_data))
+
+# Count occurrences of each unique length
+length_counts <- table(seq_lengths)
+
+# Print the results
+print("-----------------------------------")
+print("Use the most common read length -1 for SJDB_OVERHANG")
+print(length_counts)
+print("-----------------------------------")
+```
+## Loading
+If you are using the HD whole genome sgRNA library, in the load_tables block, simply specify which sub-libraries (if any) you wish to exclude in remove_these_sublibraries, and then run the block. 
+```{r load_tables}
+remove_these_sublibraries = c("ICS_5","ICS_6") #Set sublibraries to be removed
+
+
+if (first_time == TRUE){
+  sgRNA_df <- read_excel("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s4.xlsx")  # Reads the first sheet by default
+  sgRNA_df_counts <- read_excel("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s6.xlsx")
+  
+  saveRDS(sgRNA_df, get_file_path(rds_output_folder, "sgRNA_df.rds"))
+  saveRDS(sgRNA_df_counts, get_file_path(rds_output_folder, "sgRNA_df_counts.rds"))
+  
+  #Keep only specific sublibraries
+  sgRNA_df <- sgRNA_df %>% filter(!(ics_sublib %in% remove_these_sublibraries) | is.na(ics_sublib))
+  sgRNA_df_counts <- sgRNA_df_counts %>% filter(!(sublib %in% remove_these_sublibraries))
+  sgRNA_df_counts <- sgRNA_df_counts %>%
+    distinct(sgRNA, .keep_all = TRUE)
+  
+  merged_sgRNA_df <- full_join(sgRNA_df, sgRNA_df_counts, by = c("sgrna_id" = "sgRNA"))
+  
+  # Check if there is anything that didn't have a match
+  unmatched_from_sgRNA_df <- merged_sgRNA_df %>% filter(is.na(count))
+  unmatched_from_sgRNA_df_counts <- merged_sgRNA_df %>% filter(is.na(seq))
+  if (nrow(unmatched_from_sgRNA_df) == 0 & nrow(unmatched_from_sgRNA_df_counts) == 0){
+    rm(unmatched_from_sgRNA_df)
+    rm(unmatched_from_sgRNA_df_counts)
+  }
+  
+  # Remove the two duplicate columns from the dataframe
+  merged_sgRNA_df <- merged_sgRNA_df %>% select(-ics_sublib)
+  
+  saveRDS(merged_sgRNA_df, get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
+} else {
+  sgRNA_df <- readRDS(get_file_path(rds_output_folder, "sgRNA_df.rds"))
+  sgRNA_df_counts <- readRDS(get_file_path(rds_output_folder, "sgRNA_df_counts.rds"))
+  merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
+}
+
+```
+
+## Generate Reference Fasta
+Generate the reference.fasta file, which will be used by STAR.
+
+```{r make_reference_fasta, eval=FALSE}
+#add cassette 
+NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAA"))
+
+build_ref_df = function(df) {
+  ref_df <- df %>%
+    mutate(seqname = sgrna_id,
+           source = ifelse(!is.na(symbol), src_lib, "control"),
+           feature = ifelse(!is.na(symbol), "gene", "control"),
+           score = ".",
+           strand = "+",
+           frame = ".",
+           # Construct the new column based on whether "symbol" is NA
+           attribute = ifelse(
+             is.na(symbol),  
+             paste0(
+               'gene_id "', Gene, '"; ',
+               'transcript_id "', Gene, '"; ',
+               'gene_name "', sgrna_id, '"; ',
+               'ics_sublib "', sublib, '"; ',
+               'count "', count, '";'
+             ),
+             paste0(
+               'gene_id "', Gene, '"; ',
+               'transcript_id "', Gene, '"; ',
+               'chromosome "', chr, '"; ',
+               'gene_name "', symbol, '"; ',
+               'source "', src_lib, '"; ',
+               'entrez_id "', entrez, '"; ',
+               'count "', count, '"; ',
+               'ics_sublib "', sublib, '"; ',
+               'start "', start, '"; ',
+               'end "', end, '";'
+             )
+           ),
+           start = 1,
+           end = nchar(full_oligo)
+    )
+  
+  # Create separate dataframes for each feature value
+  gene_df <- ref_df %>% mutate(feature = "gene")
+  exon_df <- ref_df %>% mutate(feature = "exon")
+  transcript_df <- ref_df %>% mutate(feature = "transcript")
+  
+  # Combine the dataframes together
+  ref_df <- bind_rows(gene_df, exon_df, transcript_df) %>%
+    arrange(sgrna_id, feature) %>%  # Optional: To sort the output nicely by sgrna_id and feature
+    select(seqname, source, feature, start, end, score, strand, frame, attribute)  # Ensures seqname is the first column
+  
+  return(ref_df)
+}
+
+write_fasta = function(df, output_path = "output.fa"){
+
+  # Construct the FASTA headers based on whether "symbol" is NA
+  df <- df %>%
+    mutate(
+      fasta_header = ifelse(
+        is.na(symbol),
+        paste0(">", sgrna_id, 
+               " gene:", Gene, 
+               " length:", nchar(full_oligo), 
+               " count:", count, 
+               " sgRNA:", seq),
+        paste0(">", sgrna_id, 
+               " gene:", Gene, 
+               " length:", nchar(full_oligo), 
+               " count:", count, 
+               " sgRNA:", seq, 
+               " entrez_id:", entrez, 
+               " ", chr, 
+               " ", start, ":", end)
+      )
+    )
+  
+    # Prepare FASTA entries as a vector (interleaving headers and sequences)
+    fasta_entries <- c(rbind(df$fasta_header, df$full_oligo))
+    
+    # Write to a .fa file
+    writeLines(fasta_entries, output_path)
+
+}
+
+NOPE_sgRNA_ref_df = build_ref_df(NOPE_sgRNA_df)
+
+write.table(NOPE_sgRNA_ref_df,
+            get_file_path(genome_output_folder, "NOPE_ref.gtf"),
+            sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+write_fasta(NOPE_sgRNA_df, get_file_path(genome_output_folder, "NOPE_ref.fa"))
+
+print(paste("For the --genomeSAindexNbases option use:",round(min(14, log2(sum(nchar(NOPE_sgRNA_df$full_oligo)))/2-1),0)))
+```
+# Read Filtering
+## Plot Reads per umi for manual inspection
+```{r plot_reads_per_UMI, eval=TRUE}
+# run_plot_reads_per_UMI
+plot_reads_per_UMI = function(threshold_df_short = NULL, folder_path = grouped_output_folder){
+  
+  file_paths <- list.files(path = folder_path, pattern = "\\.tsv$", full.names = TRUE)
+  file_names <- list.files(path = folder_path, pattern = "\\.tsv$", full.names = FALSE)
+  file_names = gsub("\\.tsv$", "", file_names)
+  graph_list = list()
+  for (i in 1:length(file_paths)){
+    # if (i > 1){
+    #   next
+    # }
+    name = file_names[[i]]
+    title = paste0("Knee Plot of Reads per UMI: ",name)
+    df_1 = read.table(file_paths[[i]], sep="\t", header=TRUE)
+    df_1 <- df_1 %>% select(contig,umi,umi_count,final_umi_count,unique_id)
+    # Remove duplicate (unique_id, umi) pairs
+    df_1 <- df_1 %>%
+      distinct(unique_id, umi, .keep_all = TRUE) 
+    df_2 <- df_1 %>% distinct(unique_id, .keep_all = TRUE)
+    # Create a ranked index (1 = largest count)
+    # Rank both datasets (highest value = rank 1)
+    df_1 <- df_1 %>% mutate(rank = rank(-umi_count, ties.method = "first"))
+    df_2 <- df_2 %>% mutate(rank = rank(-final_umi_count, ties.method = "first"))
+    
+    # Convert to a dataframe for plotting
+    # Combine datasets into a single long format dataframe for ggplot
+    df <- bind_rows(
+      df_1 %>% rename(reads_per_umi = umi_count) %>% mutate(line = "pre-grouping"),
+      df_2 %>% rename(reads_per_umi = final_umi_count) %>% mutate(line = "post-grouping")
+    )
+    
+    p = ggplot(df, aes(x = rank, y = reads_per_umi, color = line)) +
+      geom_line() + 
+      scale_x_log10() +  # Logarithmic x-axis
+      scale_y_log10() +
+      labs(title = title,
+           x = "UMI rank", 
+           y = "Reads per UMI (log10)") +
+      theme_bw()
+    
+    if (!is.null(threshold_df_short = NULL)){
+      p <- p +
+        geom_hline(aes(yintercept = threshold_df_short$threshold[threshold_df_short$replicate == name], 
+               linetype = "Threshold"), 
+           color = "red", size = 1) +
+        scale_linetype_manual(name = "", values = c("Threshold" = "dashed")) # Add threshold to legend
+    }
+    
+    graph_list[[i]] <- p
+
+  }
+  return(graph_list)
+}
+if (first_time == TRUE){
+  read_count_plots = plot_reads_per_UMI()
+  saveRDS(read_count_plots,
+          get_file_path(rds_output_folder, "read_count_plots.rds"))
+} else {
+  read_count_plots = readRDS(get_file_path(rds_output_folder,
+                                           "read_count_plots.rds"))
+}
+
+```
+### Reads per UMI
+```{r UMI_Knee_plot_2, eval=TRUE, warning=FALSE}
+
+for (i in 1:length(read_count_plots)){
+  p <- read_count_plots[[i]]
+  
+  plot_title <- p$labels$title
+  name_extracted <- sub("Knee Plot of Reads per UMI: ", "", plot_title)
+  threshold <- threshold_df$threshold[threshold_df$replicate == name_extracted]
+  p <- p +
+    geom_hline(aes(yintercept = threshold, linetype = "Threshold"), color = "red", size = 1) +
+    scale_linetype_manual(name = "", values = c("Threshold" = "dashed")) # Add threshold to legend
+
+  print(p)
+}
+print(read_count_plots[[4]])
+```
+## Generate Threshold.tsv
+```{r generate_thresholds.tsv, eval=FALSE}
+
+# trheshold_df generated by manual inspection of cutoff points 
+# REMOVE THIS IF RUNNING FOR THE FIRST TIME
+threshold_df <- data.frame(
+  replicate = c("I_L1_1", "I_L1_2", "I_L1_3", "I_L2_1", "I_L2_2", "I_L3_1", "I_L3_2", "I_L4_1", "I_L4_2",
+                "L_L1_1", "L_L1_2", "L_L1_3", "L_L2_1", "L_L2_2", "L_L3_1", "L_L3_2", "L_L3_3", "L_L4_1",
+                "L_L4_2", "L_L4_3", "U_L1_1", "U_L1_2", "U_L1_3", "U_L2_1", "U_L2_2", "U_L3_1", "U_L3_2",
+                "U_L3_3", "U_L4_1", "U_L4_2", "U_L4_3"),
+  threshold = c(3000, 2000, 2000, 3000, 3000, 2000, 3000, 3000, 3000,
+                3000, 1500, 3000, 3000, 2000, 30000, 2000, 2000, 3000,
+                3000, 2000, 1000, 1000, 3000, 2000, 800, 1000, 2000,
+                1000, 1000, 1000, 2000)
+)
+
+threshold_df_to_tsv <- function(out_file, threshold_df){
+  write.table(threshold_df, file = out_file, sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+}
+threshold_df_to_tsv("/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt/thresholds.tsv", threshold_df)
+
+```
+
+## Create the Filter File
+```{r Filter_UMIs_with_few_reads, eval=FALSE}
+
+
+filter_UMIs_with_few_reads = function(threshold_df, folder_path = grouped_output_folder){
+  print("Beginning Generation of Read Filter *_threshold_umis.txt files")
+  file_paths <- list.files(path = folder_path, pattern = "\\.tsv$", full.names = TRUE)
+  file_names <- list.files(path = folder_path, pattern = "\\.tsv$", full.names = FALSE)
+  file_names = gsub("\\.tsv$", "", file_names)
+  graph_list = list()
+  for (i in 1:length(file_paths)){
+
+    df = read.table(file_paths[[i]], sep="\t", header=TRUE)
+    df <- df %>% select(read_id,final_umi_count)
+    # Extract the value from threshold_df$threshold
+    threshold_value <- threshold_df %>%
+      filter(replicate == file_names[[i]]) %>%
+      pull(threshold)
+    # Filter rows where final_umi_count is less than or equal to X
+    df <- df %>%
+      filter(final_umi_count <= threshold_value)
+    
+    save_path = sub(".tsv","_threshold_umis.txt",file_paths[[i]])
+    write.table(df$read_id, save_path, row.names = FALSE, col.names = FALSE, quote = FALSE)
+    print(paste("Completed",i,"out of",length(file_paths)))
+  }
+  return(df)
+}
+
+UMI_read_filter_df = filter_UMIs_with_few_reads(threshold_df, folder_path = grouped_output_folder)
+
+```
+
+```{r QC, eval=TRUE}
+quality_control = function(
+                           sgRNA_df_counts,
+                           folder_path = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/dedup/",
+                           sufix_to_rm = "_dedup_idxstats.txt",
+                           count_0s = TRUE,
+                           umi_distr = TRUE,
+                           skip_list = c("L_L4_3","U_L4_3")
+                           ){
+  sgRNA_df_counts <- sgRNA_df_counts %>% filter(!(sublib %in% c("ICS_5", "ICS_6")))
+  sgRNA_df_counts <- sgRNA_df_counts %>%
+    distinct(sgRNA, .keep_all = TRUE)
+  file_list <- list.files(path = folder_path, pattern = "_dedup_idxstats\\.txt$", full.names = TRUE)
+  file_name_list <- list.files(path = folder_path, pattern = "_dedup_idxstats\\.txt$", full.names = FALSE)
+  
+  if (!is.null(skip_list)){
+    skip_name_list <- paste0(skip_list,sufix_to_rm)
+    # Remove exact matches from file_name_list
+    file_name_list <- file_name_list[!file_name_list %in% skip_name_list]
+    
+    # Remove entries from file_list where the filename (basename) is in skip_name_list
+    file_list <- file_list[!basename(file_list) %in% skip_name_list]
+  }
+  
+  df_list = list()
+  # Loop through each file path, read the file, and add the dataframe to the list
+  for (i in 1:length(file_list)) {
+    df <- read.table(file_list[[i]], header=FALSE, sep="\t", stringsAsFactors=FALSE)
+    df <- df %>%
+      rename(sgRNA = V1, count = V3) %>%
+      select(-c(V2,V4)) %>%
+      filter(sgRNA != "*")
+    df_list[[i]] <- df  # The list will have the filename as the name of the dataframe
+  }
+  
+  # Count the number of 0s in the count column for each dataframe
+  if (count_0s == TRUE){
+    count_zeros_sgRNA_df_counts <- sum(sgRNA_df_counts$count == 0)
+    cat("Total number of sgRNA in the library:\t",nrow(sgRNA_df_counts),"\n")
+    cat(sprintf("Guides with 0 reads in the library: %6d\t\tCoverage: %6.2f%%\n", 
+            count_zeros_sgRNA_df_counts, 
+            round(1 - count_zeros_sgRNA_df_counts / nrow(sgRNA_df_counts) * 100, 2)))
+    for (i in 1:length(file_name_list)){
+      count_zeros <- sum(df_list[[i]]$count == 0)
+      name = sub(sufix_to_rm,"",file_name_list[[i]])
+      cat(sprintf("Guides not covered in %-12s: %6d\t\tCoverage: %6.2f%%\n", 
+            name, count_zeros, round(100 - count_zeros / nrow(sgRNA_df_counts) * 100, 2)))
+    }
+    cat("\n")
+    # Second loop - grouped by A_B
+    grouped_data <- list()
+    
+    # Group dataframes by A_B
+    for (i in 1:length(file_name_list)) {
+      name <- sub(sufix_to_rm, "", file_name_list[[i]])
+      
+      # Extract the first two parts (A_B from A_B_C)
+      group_name <- sub("(_[^_]*)$", "", name)  # Removes the last _C part
+      
+      # Add dataframe to the grouped list
+      if (!group_name %in% names(grouped_data)) {
+        grouped_data[[group_name]] <- list()
+      }
+      grouped_data[[group_name]][[name]] <- df_list[[i]]
+    }
+    
+    # Compute coverage per A_B group
+    for (group in names(grouped_data)) {
+      # Get the list of dataframes for this A_B group
+      df_list_group <- grouped_data[[group]]
+      
+      # Merge all dataframes by "sgRNA"
+      merged_df <- Reduce(function(x, y) merge(x, y, by = "sgRNA", all = TRUE), df_list_group)
+      
+      # Identify rows where all counts are 0
+      count_zeros_grouped <- sum(rowSums(merged_df[, -1] == 0, na.rm = TRUE) == ncol(merged_df) - 1)
+      
+      # Print results
+      cat(sprintf("Guides not covered in %-12s: %6d\t\tCoverage: %6.2f%%\n", 
+                  group, count_zeros_grouped, round(100 - count_zeros_grouped / nrow(sgRNA_df_counts) * 100, 2)))
+    }
+  }
+  
+  # Generate UMI count distribution plots
+  if (umi_distr == TRUE) {
+    for (i in 1:length(file_name_list)) {
+      df <- df_list[[i]]
+      name <- sub(sufix_to_rm, "", file_name_list[[i]])
+      
+      # Create a frequency table of count occurrences
+      umi_count_freq <- df %>%
+        count(count, name = "frequency") %>% 
+        filter(count <= 100) # remove outliers for better readabilty of the plots
+
+      # Generate a bar plot using ggplot2
+      p <- ggplot(umi_count_freq, aes(x = count, y = frequency)) +
+        geom_bar(stat = "identity", fill = "steelblue", color = "black") +
+        scale_y_log10() +
+        theme_bw() +
+        labs(title = paste("UMI counts for", name),
+             x = "UMI Count",
+             y = "Frequency") +
+        theme(plot.title = element_text(hjust = 0.5))
+      print(p)  # Display the plot
+    }
+  }
+}
+
+sgRNA_df_counts = readRDS("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/sgRNA_df_counts.rds")
+quality_control(sgRNA_df_counts)
+```
+
+
+
+```{r test, eval=FALSE}
+
+```
+
+
