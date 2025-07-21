@@ -290,22 +290,92 @@ if (first_time == TRUE){
 }
 
 ```
-### Reads per UMI
+### Plot Reads per UMI
+There are four if statements in this chunk that can be set to TRUE to execute them. 
+1. Printing the plots in the output of this chunk
+2. Saving the plots as png files at a specified location
+3. Printing the plots, plus a dashed line indicating the threshold. 
+    (Only do this once threshold_df has been defined)
+4. Saving the plots, plus a dashed line indicating the threshold,
+    as png files at a specified location.
+    (Only do this once threshold_df has been defined)
 ```{r UMI_Knee_plot_2, eval=TRUE, warning=FALSE}
-
-for (i in 1:length(read_count_plots)){
-  p <- read_count_plots[[i]]
-  
-  plot_title <- p$labels$title
-  name_extracted <- sub("Knee Plot of Reads per UMI: ", "", plot_title)
-  threshold <- threshold_df$threshold[threshold_df$replicate == name_extracted]
-  p <- p +
-    geom_hline(aes(yintercept = threshold, linetype = "Threshold"), color = "red", size = 1) +
-    scale_linetype_manual(name = "", values = c("Threshold" = "dashed")) # Add threshold to legend
-
-  print(p)
+# 1. Printing the plots in the output of this chunk
+if (FALSE){
+  for (i in 1:length(read_count_plots)){
+    p <- read_count_plots[[i]]
+    
+    plot_title <- p$labels$title
+    name_extracted <- sub("Knee Plot of Reads per UMI: ", "", plot_title)
+    print(p)
+  }
 }
-print(read_count_plots[[4]])
+# 2. Saving the plots as png files at a specified location
+if (FALSE){
+ # Define your output directory
+  output_dir <- "/g/steinmetz/link/Amplicon_barcode_analysis/plots/read_filter/"
+  dir.create(output_dir, showWarnings = FALSE)  # Create it if it doesn't exist
+  
+  for (i in 1:length(read_count_plots)) {
+    p <- read_count_plots[[i]]
+    
+    plot_title <- p$labels$title
+    name_extracted <- sub("Knee Plot of Reads per UMI: ", "", plot_title)
+
+    # Sanitize filename (remove special chars, spaces)
+    safe_name <- gsub("[^A-Za-z0-9_\\-]", "_", name_extracted)
+    file_path <- file.path(output_dir, paste0(safe_name, ".png"))
+  
+    # Save the plot
+    ggsave(filename = file_path, plot = p, width = 6, height = 4, dpi = 600)
+  } 
+}
+# 3. Printing the plots, plus a dashed line indicating the threshold. 
+#     (Only do this once threshold_df has been defined)
+if (FALSE){
+  for (i in 1:length(read_count_plots)){
+    p <- read_count_plots[[i]]
+    
+    plot_title <- p$labels$title
+    name_extracted <- sub("Knee Plot of Reads per UMI: ", "", plot_title)
+    threshold <- threshold_df$threshold[threshold_df$replicate == name_extracted]
+    p <- p +
+      geom_hline(aes(yintercept = threshold, linetype = "Threshold"), color = "red", size = 1) +
+      scale_linetype_manual(name = "", values = c("Threshold" = "dashed")) # Add threshold to legend
+  
+    print(p)
+  }
+}
+# 4. Saving the plots, plus a dashed line indicating the threshold,
+#     as png files at a specified location.
+#     (Only do this once threshold_df has been defined)
+if (FALSE){
+ # Define your output directory
+  output_dir <- "/g/steinmetz/link/Amplicon_barcode_analysis/plots/read_filter/"
+  dir.create(output_dir, showWarnings = FALSE)  # Create it if it doesn't exist
+  
+  for (i in 1:length(read_count_plots)) {
+    p <- read_count_plots[[i]]
+    
+    plot_title <- p$labels$title
+    name_extracted <- sub("Knee Plot of Reads per UMI: ", "", plot_title)
+    threshold <- threshold_df$threshold[threshold_df$replicate == name_extracted]
+  
+    # Add the threshold line
+    p <- p +
+      geom_hline(aes(yintercept = threshold, linetype = "Threshold"), color = "red", size = 1) +
+      scale_linetype_manual(name = "", values = c("Threshold" = "dashed"))
+  
+    # Sanitize filename (remove special chars, spaces)
+    safe_name <- gsub("[^A-Za-z0-9_\\-]", "_", name_extracted)
+    file_path <- file.path(output_dir, paste0(safe_name, ".png"))
+  
+    # Save the plot
+    ggsave(filename = file_path, plot = p, width = 6, height = 4, dpi = 600)
+  } 
+}
+
+
 ```
 ## Generate Threshold.tsv
 ```{r generate_thresholds.tsv, eval=FALSE}

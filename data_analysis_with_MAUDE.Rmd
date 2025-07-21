@@ -1186,7 +1186,7 @@ plot_maude_qc <- function(maude_counts_df, print = TRUE, add_0s = FALSE) {
 
   p1 <- ggplot(na_summary_overall, aes(x = condition, y = na_count, fill = condition)) +
     geom_col() +
-    labs(title = "Overall NA Counts per Condition", y = "Number of NAs", x = "Condition") +
+    labs(title = "Missing Entries per Bin", y = "Number of NAs", x = "Condition") +
     theme_bw()
 
   # --- 2. NA counts by exp ---
@@ -1198,7 +1198,7 @@ plot_maude_qc <- function(maude_counts_df, print = TRUE, add_0s = FALSE) {
 
   p2 <- ggplot(na_summary_by_exp, aes(x = exp, y = na_count, fill = condition)) +
     geom_col(position = "dodge") +
-    labs(title = "NA Counts per Condition by Experiment", x = "Experiment", y = "Number of NAs") +
+    labs(title = "Missing Entries per Bin by Experiment", x = "Experiment", y = "Number of NAs") +
     theme_bw() +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -1320,19 +1320,37 @@ control_sanity_check(maude_counts_df)
 sgRNA_counts <- count_df_long %>%
   group_by(condition, exp) %>%
   summarise(num_sgRNAs = n(), .groups = "drop") %>%
-  mutate(group = interaction(condition, exp, drop = TRUE))  # for x-axis
+  mutate(Bin = interaction(condition, exp, drop = TRUE))  # for x-axis
 
 # 2. Plot
-p <- ggplot(sgRNA_counts, aes(x = group, y = num_sgRNAs, fill = condition)) +
+p <- ggplot(sgRNA_counts, aes(x = Bin, y = num_sgRNAs, fill = condition)) +
   geom_col() +
   labs(
-    title = "Number of sgRNA Entries per (Condition, Exp)",
-    x = "Condition x Experiment",
-    y = "sgRNA Count"
+    title = "Number of sgRNA Entries per (Bin, Exp)",
+    x = "Bin x Experiment",
+    y = "sgRNA Entries"
   ) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-        
+
+# 1. Count unique sgRNAs per (condition, exp)
+sgRNA_counts <- count_df_long %>%
+  group_by(condition) %>%
+  summarise(num_sgRNAs = n(), .groups = "drop") %>%
+  mutate(Bin = condition)  # for x-axis
+
+# 2. Plot
+q <- ggplot(sgRNA_counts, aes(x = Bin, y = num_sgRNAs, fill = condition)) +
+  geom_col() +
+  labs(
+    title = "Number of sgRNA Entries per Bin",
+    x = "Bin",
+    y = "sgRNA Entries"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(q)        
 print(p)        
 plot_maude_qc(maude_counts_df)
 plot_maude_qc(maude_counts_df, add_0s = TRUE)
