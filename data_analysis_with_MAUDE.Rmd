@@ -531,25 +531,63 @@ process_john_data <- function(parent_dir,
   return(final_df)
 }
 normalize_count_df_long <- function(count_df_long, norm_method = "control_median"){
+  allowed_norm_methods <- c("control_median")
+  if (!(norm_method %in% allowed_norm_methods)){
+    cat("ERROR: ", norm_method, "is not an allowed normalization method.\n")
+    cat("Implemented normalization methods: ", allowed_norm_methods,"\n")
+    stop()
+  }
+  
   if (norm_method == "control_median"){
+  
+  
   # 1. Determine normalization factors based on control categories
   norm_fac <- count_df_long %>%
-    filter(group_category %in% c("targeting_control", "non_targeting_control")) %>%
+    filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
     group_by(condition, sublib, sample) %>%
     summarise(norm_factor = median(count), .groups = "drop")
   
   # 2. Global median across all counts (entire dataset)
   med_count <- median(count_df_long$count)
   
+  count_df_long_continue <- count_df_long
+  
+  if (med_count == 0 | any(norm_fac$norm_factor == 0)) {
+    cat("WARNING: at least one normalization factor is 0\n")
+    cat("Median of all counts:", med_count, "\n")
+    
+    zero_nf <- norm_fac %>% 
+      filter(norm_factor == 0)
+    
+    if (!(nrow(zero_nf) == 0)) {
+      cat("Groups with norm_factor == 0:\n")
+      print(norm_fac)# shows condition | sublib | sample | norm_factor
+      cat("Adding global pseudocount (+1).\n")
+      
+      count_df_long_plus_one <- count_df_long %>% mutate(count = count + 1)
+      norm_fac <- count_df_long_plus_one %>%
+        filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
+        group_by(condition, sublib, sample) %>%
+        summarise(norm_factor = median(count), .groups = "drop")
+      
+      # 2. Global median across all counts (entire dataset) #
+      med_count <- median(count_df_long_plus_one$count)
+      
+      count_df_long_continue <- count_df_long_plus_one
+    }
+    
+    cat("--------------------------------------------\n")
+  }
+  
   # 3. Normalize counts using (count * med_count / norm_factor)
-  count_df_long <- count_df_long %>%
+  return_df <- count_df_long_continue %>%
     inner_join(norm_fac, by = c("condition", "sublib", "sample")) %>%
     mutate(norm_count = (count * med_count) / norm_factor) %>% 
     mutate(count = round(norm_count,2)) %>%
     select(-c(norm_factor,norm_count))
   }
   
-  return(count_df_long)
+  return(return_df)
 }
 
 process_john_data_backup <- process_john_data
@@ -1024,7 +1062,7 @@ generate_all_violin_plots_and_summaries <- function(df,
   }
 }
 generate_all_violin_plots_and_summaries(count_df_long, y_limit = 20, non_targeting = TRUE)
-generate_all_violin_plots_and_summaries(count_df_long, norm_method = "control_median", y_limit = 30, non_targeting = TRUE) 
+generate_all_violin_plots_and_summaries(count_df_long, norm_method = "control_median", y_limit = 10, non_targeting = TRUE) 
 
 
 
