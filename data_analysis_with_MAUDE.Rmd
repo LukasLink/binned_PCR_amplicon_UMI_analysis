@@ -31,7 +31,7 @@ skip_list = c("L_L4_3","U_L4_3") # If any files are to be skipped list their nam
 pipeline <- "lukas"         # can be "john", "john_rf" or "lukas" 
 data_type <- "umis"        # can be "reads" or "umis"
 drop_0s <- FALSE            # bolean
-method <- "sum"             # can be "rep", "sum" or ""
+method <- "sum"             # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 recover_input <- TRUE       # bolean
 subsample_controls <- TRUE  # bolean
 extra_suffix <- ""          # custom sufix, special behaviour when set to "rf"
@@ -1099,8 +1099,8 @@ generate_all_violin_plots_and_summaries <- function(df,
     }
   }
 }
-generate_all_violin_plots_and_summaries(count_df_long, y_limit = 20, non_targeting = TRUE)
-generate_all_violin_plots_and_summaries(count_df_long, norm_method = "control_median", y_limit = 10, non_targeting = TRUE) 
+generate_all_violin_plots_and_summaries(count_df_long, y_limit = 5, non_targeting = TRUE)
+generate_all_violin_plots_and_summaries(count_df_long, norm_method = "control_median", y_limit = 6, non_targeting = TRUE) 
 
 
 
@@ -1279,7 +1279,7 @@ maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
                                          drop_0s = drop_0s,
                                          recover_input = recover_input)
 if (!(method %in% c("","rep","sum"))){
-  stop("Error: 'method' must be one of '', 'rep', or 'sum'. The script will now stop.")
+  stop("Error: 'method' must be one of '', 'rep', 'rep_sample', 'rep_sublib', or 'sum'. The script will now stop.")
 }
 
 if (method == ""){
@@ -1287,8 +1287,15 @@ if (method == ""){
     mutate(exp = "rep1")
 }
 if (method == "rep"){
-  # maude_counts_df <- maude_counts_df %>% 
-  #   mutate(exp = sample)
+
+}
+if (method == "rep_sample"){
+  maude_counts_df <- maude_counts_df %>%
+    mutate(exp = sample)
+}
+if (method == "rep_sublib"){
+  maude_counts_df <- maude_counts_df %>%
+    mutate(exp = sublib)
 }
 if (method == "sum"){
   maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
