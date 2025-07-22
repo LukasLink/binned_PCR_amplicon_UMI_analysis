@@ -208,7 +208,6 @@ read_file_to_df <- function(file_name,
                 correct_sum, 100 * correct_sum / total_sum))
     cat(sprintf("  Wrong   (aligned to sgRNA not in sublibary): %d (%.2f%%)\n\n", 
                 wrong_sum, 100 * wrong_sum / total_sum))
-    cat("--------------------------------------------\n")
   }
   
   same_controls_in_all_sublibraries <- get("same_controls_in_all_sublibraries", envir = .GlobalEnv)
@@ -221,7 +220,11 @@ read_file_to_df <- function(file_name,
       filter(sublib == sub_lib) %>%
       select(-sublib)
   }
-
+  
+  if (check_alignments == TRUE) {
+    cat(sprintf("sgRNA coverage: %.2f%%\n", sum(df$count > 0) / nrow(df) * 100))
+    cat("--------------------------------------------\n")
+  }
     
   df <- df %>%
     mutate(group_category = case_when(
@@ -825,17 +828,32 @@ ggplot(count_ranked, aes(x = rank, y = count, color = condition)) +
 
 ```{r Data_exploration_violin, eval=FALSE}
 plot_violin_by_sublib_sample <- function(count_df_long, norm_method = NULL) {
+  df <- count_df_long
   
   if (!is.null(norm_method)){
-    count_df_long <- normalize_count_df_long(count_df_long, norm_method)
+    df <- normalize_count_df_long(count_df_long, norm_method)
+    norm_title <- paste0("(normalization: ",norm_method,")")
+  } else {
+    norm_title <- "(no normalization)"
   }
-  
+  count_type <- get("data_type", envir = .GlobalEnv)
+  if (!(count_type %in% c("umis","reads"))){
+    cat("ERROR ", count_type, " is not a viable data_type.")
+    cat("data_type must be umis or reads")
+    stop()
+  }
+  if (count_type == "umis"){
+    title_prefix <- "UMI counts for"
+  }
+  if (count_type == "reads"){
+    title_prefix <- "Read counts for"
+  }
   # Use exact matching for group_type
-  count_df_long <- count_df_long %>%
+  df <- df %>%
     mutate(group_type = ifelse(group_category == "targeting", "targeting", "non-targeting"))
 
   # Get all unique (sublib, sample) pairs
-  unique_groups <- count_df_long %>%
+  unique_groups <- df %>%
     distinct(sublib, sample)
 
   plot_list <- list()
@@ -846,36 +864,37 @@ plot_violin_by_sublib_sample <- function(count_df_long, norm_method = NULL) {
     sample_val <- unique_groups$sample[i]
     title <- paste0("L",sub("sublib_","",sublib_val),"_",sub("sample_","",sample_val))
     # Subset for that combination
-    df_subset <- count_df_long %>%
+    df_subset <- df %>%
       filter(sublib == sublib_val, sample == sample_val)
 
     # Filter 3 unique conditions from each group_type
     df_subset <- df_subset %>%
-      group_by(group_type, condition) %>%
+      rename(Type = group_type) %>% 
+      group_by(Type, condition) %>%
       filter(n() > 0) %>%
       ungroup()
 
     targeting_conds <- df_subset %>%
-      filter(group_type == "targeting") %>%
+      filter(Type == "targeting") %>%
       pull(condition) %>%
       unique() %>%
       head(3)
 
     nontargeting_conds <- df_subset %>%
-      filter(group_type == "non-targeting") %>%
+      filter(Type == "non-targeting") %>%
       pull(condition) %>%
       unique() %>%
       head(3)
 
     df_filtered <- df_subset %>%
-      filter((group_type == "targeting" & condition %in% targeting_conds) |
-             (group_type == "non-targeting" & condition %in% nontargeting_conds))
+      filter((Type == "targeting" & condition %in% targeting_conds) |
+             (Type == "non-targeting" & condition %in% nontargeting_conds))
 
     # Plot
-    p <- ggplot(df_filtered, aes(x = condition, y = count, fill = group_type)) +
+    p <- ggplot(df_filtered, aes(x = condition, y = count, fill = Type)) +
       geom_violin(trim = FALSE, scale = "width") +
       labs(
-        title = paste0(sublib_val,", ", sample_val),
+        title = paste0(title_prefix," ",sublib_val,", ", sample_val," ",norm_title),
         x = "",
         y = "Count"
       ) +
@@ -956,7 +975,23 @@ plot_violin_by_group_category_split_by_sublib <- function(df,
   
   if (!is.null(norm_method)){
     df <- normalize_count_df_long(df, norm_method)
+    norm_title <- paste0("(normalization: ",norm_method,")")
+  } else {
+    norm_title <- "(no normalization)"
   }
+  count_type <- get("data_type", envir = .GlobalEnv)
+  if (!(count_type %in% c("umis","reads"))){
+    cat("ERROR ", count_type, " is not a viable data_type.")
+    cat("data_type must be umis or reads")
+    stop()
+  }
+  if (count_type == "umis"){
+    title_prefix <- "UMI counts for"
+  }
+  if (count_type == "reads"){
+    title_prefix <- "Read counts for"
+  }
+  
   # Filter based on group_category
   filtered_df <- df %>%
     filter(
@@ -994,16 +1029,19 @@ plot_violin_by_group_category_split_by_sublib <- function(df,
       ) +
       geom_text(
         data = label_df,
-        aes(x = group, y = y_limit - 3, label = paste0("mean: ", mean_count)),
+        aes(x = group, y = y_limit - y_limit/16, label = paste0("mean: ", mean_count)),
         size = 2.3, inherit.aes = FALSE
       ) +
       geom_text(
         data = label_df,
-        aes(x = group, y = y_limit - 6, label = paste0("sd: ", sd_count)),
+        aes(x = group, y = y_limit - y_limit/8, label = paste0("sd: ", sd_count)),
         size = 2.3, inherit.aes = FALSE
       ) +
       labs(
-        title = paste(ifelse(include_targeting, "Targeting", "Non-Targeting"), "–", sublib_name),
+        title = paste(title_prefix,
+                      ifelse(include_targeting, "Targeting sgRNA", "Non-Targeting sgRNA"),
+                      "–",
+                      sublib_name, norm_title),
         x = "",
         y = "Count"
       ) +
