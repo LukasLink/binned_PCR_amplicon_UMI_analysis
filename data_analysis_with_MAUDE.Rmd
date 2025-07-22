@@ -18,43 +18,71 @@ library(optparse)
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::select)
-# User Options
-##############
-first_time <- TRUE
 
-output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030"
-john_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
-john_rf_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
+#===============================================================================
+# User Options (can be overrided via CLI)
+#===============================================================================
+# first_time will save all intermediary results, if FALSE will try to load them
+first_time      <- TRUE
 
-skip_list = c("L_L4_3","U_L4_3") # If any files are to be skipped list their names here
+# Directories
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030"
+john_folder     <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
+john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 
-pipeline <- "lukas"         # can be "john", "john_rf" or "lukas" 
-data_type <- "umis"         # can be "reads" or "umis"
-method <- "sum"             # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
-recover_input <- TRUE       # bolean estimates missing input data
-subsample_controls <- TRUE  # bolean keeps some control sgRNAs for reference
-extra_suffix <- ""          # custom sufix, special behaviour when set to "rf"
-                            # if extra_suffix is set to "rf" it applies simplified read filtering, which 
-                            # removes all reads below simplified_rf_threshold
+# If any files are to be skipped list their names here
+skip_list       <-  c("L_L4_3","U_L4_3") 
+
+# Set Options for pipline function
+pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" 
+data_type           <- "umis"   # can be "reads" or "umis"
+method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+norm_method         <- ""       # can be "control_median" or ""
+recover_input       <- TRUE     # bolean estimates missing input data
+subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
+
+# Set Fractions for the upper and lower bins
+upper_lower_percentage <- 0.10  # Fraction of the lower&upper bin 0.10 = 10%
+                                # The Rest is used and removed by MAUDE for normalization.
+
+# Custom suffix and optional simplified read filtering
+extra_suffix  <- ""   # custom sufix, special behaviour when set to "rf"
+                      # if extra_suffix is set to "rf" it applies simplified read filtering,  
+                      # which removes all reads below simplified_rf_threshold
 simplified_rf_threshold <- 1000 # threshold for simplified filtering
 
-upper_lower_percentage <- 0.10 # Fraction of the lower&upper bin 0.10 = 10%
-same_controls_in_all_sublibraries <- TRUE # Set to False if the individual sublibraries or replicates have different control sgRNAs
+# Are all the non-targeting control sgRNAS the same in all sublibraries/replicates?
+same_controls_in_all_sublibraries <- TRUE
 
-drop_0s <- FALSE            # bolean removes all guides with no UMIs/reads
-# End of user options
-#############
+# Remove rows without any data 
+drop_0s <- FALSE  # bolean removes all guides with no UMIs/reads
 
+#===============================================================================
 # Define command-line options
+#===============================================================================
 option_list <- list(
+  make_option(c("--first_time"), type = "logical", default = first_time,
+              help = "First run flag, will save files (default: TRUE)", metavar = "LOGICAL"),
+  make_option(c("--output_folder"), type = "character", default = output_folder,
+              help = "Output folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030')", 
+              metavar = "PATH"),
+  make_option(c("--john_folder"), type = "character", default = john_folder,
+              help = "John folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/')", 
+              metavar = "PATH"),
+  make_option(c("--john_rf_folder"), type = "character", default = john_rf_folder,
+              help = "John RF folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt')", 
+              metavar = "PATH"),
+  make_option(c("--skip_list"), type = "character", default = paste(skip_list, collapse = ","),
+              help = "If any files are to be skipped list their names here (comma-separated) (default: 'L_L4_3,U_L4_3')", 
+              metavar = "LIST"),
   make_option(c("--pipeline"), type = "character", default = pipeline, 
               help = "Pipeline name (default: 'lukas')", metavar = "CHARACTER"),
   make_option(c("--data_type"), type = "character", default = data_type, 
               help = "Data type (default: 'umis')", metavar = "CHARACTER"),
   make_option(c("--method"), type = "character", default = method, 
               help = "Method (default: '')", metavar = "CHARACTER"),
-  make_option(c("--drop_0s"), type = "logical", default = drop_0s, 
-              help = "Drop rows where input, upper, and lower are all 0 (default: TRUE)", metavar = "LOGICAL"),
+  make_option(c("--norm_method"), type = "character", default = norm_method, 
+              help = "Normalization method (default: '')", metavar = "CHARACTER"),
   make_option(c("--recover_input"), type = "logical", default = recover_input, 
               help = "Recover missing input (default: TRUE)", metavar = "LOGICAL"),
   make_option(c("--subsample_controls"), type = "logical", default = subsample_controls, 
@@ -62,30 +90,66 @@ option_list <- list(
   make_option(c("--same_controls_in_all_sublibraries"), type = "logical", default = same_controls_in_all_sublibraries, 
               help = "Set to FALSE if the individual sublibraries/replicates have different control sgRNAs (default: TRUE)", metavar = "LOGICAL"),
   make_option(c("--extra_suffix"), type = "character", default = extra_suffix, 
-              help = "Suffix for additional options (default: '')", metavar = "CHARACTER")
+              help = "Suffix for additional options (default: '')", metavar = "CHARACTER"),
+  make_option(c("--simplified_rf_threshold"), type = "integer", default = simplified_rf_threshold,
+              help = "Threshold for simplified filtering (default: 1000)", metavar = "INTEGER"),
+  make_option(c("--upper_lower_percentage"), type = "double", default = upper_lower_percentage,
+              help = "Fraction of the lower&upper bin (default: 0.10)", metavar = "DOUBLE"),
+  make_option(c("--drop_0s"), type = "logical", default = drop_0s, 
+              help = "Drop rows where input, upper, and lower are all 0 (default: TRUE)", metavar = "LOGICAL")
 )
 
+#===============================================================================
 # Parse the command-line arguments
+#===============================================================================
 opt_parser <- OptionParser(option_list = option_list)
 opt <- parse_args(opt_parser)
 
-# Access the options
-pipeline <- opt$pipeline
-data_type <- opt$data_type
-method <- opt$method
-drop_0s <- opt$drop_0s
-recover_input <- opt$recover_input
-extra_suffix <- opt$extra_suffix
+#===============================================================================
+# Override the defaults with CLI values
+#===============================================================================
+first_time                        <- opt$first_time
+output_folder                     <- opt$output_folder
+john_folder                       <- opt$john_folder
+john_rf_folder                    <- opt$john_rf_folder
+skip_list                         <- strsplit(opt$skip_list, ",")[[1]]
+pipeline                          <- opt$pipeline
+data_type                         <- opt$data_type
+method                            <- opt$method
+norm_method                       <- opt$norm_method
+recover_input                     <- opt$recover_input
+subsample_controls                <- opt$subsample_controls
 same_controls_in_all_sublibraries <- opt$same_controls_in_all_sublibraries
+extra_suffix                      <- opt$extra_suffix
+simplified_rf_threshold           <- opt$simplified_rf_threshold
+upper_lower_percentage            <- opt$upper_lower_percentage
+drop_0s                           <- opt$drop_0s
 
+#===============================================================================
 # Print the options (for verification)
-cat("Pipeline: ", pipeline, "\n")
-cat("Data Type: ", data_type, "\n")
-cat("Drop 0s: ", drop_0s, "\n")
-cat("Recover Input: ", recover_input, "\n")
-cat("Extra Suffix: ", extra_suffix, "\n")
+#===============================================================================
+cat("first_time:                        ", first_time, "\n")
+cat("output_folder:                     ", output_folder, "\n")
+cat("john_folder:                       ", john_folder, "\n")
+cat("john_rf_folder:                    ", john_rf_folder, "\n")
+cat("skip_list:                         ", paste(skip_list, collapse = ", "), "\n")
+cat("pipeline:                          ", pipeline, "\n")
+cat("data_type:                         ", data_type, "\n")
+cat("method:                            ", method, "\n")
+cat("norm_method:                       ", norm_method, "\n")
+cat("recover_input:                     ", recover_input, "\n")
+cat("subsample_controls:                ", subsample_controls, "\n")
+cat("same_controls_in_all_sublibraries: ", same_controls_in_all_sublibraries, "\n")
+cat("extra_suffix:                      ", extra_suffix, "\n")
+cat("simplified_rf_threshold:           ", simplified_rf_threshold, "\n")
+cat("upper_lower_percentage:            ", upper_lower_percentage, "\n")
+cat("drop_0s:                           ", drop_0s, "\n")
 
+
+#===============================================================================
 # Condition for adding "RI" and "D0"
+#===============================================================================
+
 if (recover_input) {
   recover_input_suffix <- "_RI"
 } else {
@@ -98,13 +162,19 @@ if (drop_0s) {
   drop_0s_suffix <- ""
 }
 
+#===============================================================================
 # Construct the file suffix
-file_suffix <- paste0("_", pipeline, "_", data_type, "_", method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix, ".rds")
+#===============================================================================
+
+file_suffix <- paste0("_", pipeline, "_", data_type, "_", method, norm_method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix, ".rds")
 file_suffix <- sub("__","_",file_suffix)
 file_suffix <- sub("_\\.","\\.",file_suffix)
 # Print the final file suffix
 cat("File Suffix: ", file_suffix, "\n")
 
+#===============================================================================
+# Construct File Paths
+#===============================================================================
 make_clean_dir <- function(base_path, sub_path) {
   
   full_path <- paste0(base_path, "/", sub_path)
@@ -544,51 +614,50 @@ normalize_count_df_long <- function(count_df_long, norm_method = "control_median
   
   if (norm_method == "control_median"){
   
-  
-  # 1. Determine normalization factors based on control categories
-  norm_fac <- count_df_long %>%
-    filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
-    group_by(condition, sublib, sample) %>%
-    summarise(norm_factor = median(count), .groups = "drop")
-  
-  # 2. Global median across all counts (entire dataset)
-  med_count <- median(count_df_long$count)
-  
-  count_df_long_continue <- count_df_long
-  
-  if (med_count == 0 | any(norm_fac$norm_factor == 0)) {
-    cat("WARNING: at least one normalization factor is 0\n")
-    cat("Median of all counts:", med_count, "\n")
+    # 1. Determine normalization factors based on control categories
+    norm_fac <- count_df_long %>%
+      filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
+      group_by(condition, sublib, sample) %>%
+      summarise(norm_factor = median(count), .groups = "drop")
     
-    zero_nf <- norm_fac %>% 
-      filter(norm_factor == 0)
+    # 2. Global median across all counts (entire dataset)
+    med_count <- median(count_df_long$count)
     
-    if (!(nrow(zero_nf) == 0)) {
-      cat("Groups with norm_factor == 0:\n")
-      print(norm_fac)# shows condition | sublib | sample | norm_factor
-      cat("Adding global pseudocount (+1).\n")
+    count_df_long_continue <- count_df_long
+    
+    if (med_count == 0 | any(norm_fac$norm_factor == 0)) {
+      cat("WARNING: at least one normalization factor is 0\n")
+      cat("Median of all counts:", med_count, "\n")
       
-      count_df_long_plus_one <- count_df_long %>% mutate(count = count + 1)
-      norm_fac <- count_df_long_plus_one %>%
-        filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
-        group_by(condition, sublib, sample) %>%
-        summarise(norm_factor = median(count), .groups = "drop")
+      zero_nf <- norm_fac %>% 
+        filter(norm_factor == 0)
       
-      # 2. Global median across all counts (entire dataset) #
-      med_count <- median(count_df_long_plus_one$count)
+      if (!(nrow(zero_nf) == 0)) {
+        cat("Groups with norm_factor == 0:\n")
+        print(norm_fac)# shows condition | sublib | sample | norm_factor
+        cat("Adding global pseudocount (+1).\n")
+        
+        count_df_long_plus_one <- count_df_long %>% mutate(count = count + 1)
+        norm_fac <- count_df_long_plus_one %>%
+          filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
+          group_by(condition, sublib, sample) %>%
+          summarise(norm_factor = median(count), .groups = "drop")
+        
+        # 2. Global median across all counts (entire dataset) #
+        med_count <- median(count_df_long_plus_one$count)
+        
+        count_df_long_continue <- count_df_long_plus_one
+      }
       
-      count_df_long_continue <- count_df_long_plus_one
+      cat("--------------------------------------------\n")
     }
     
-    cat("--------------------------------------------\n")
-  }
-  
-  # 3. Normalize counts using (count * med_count / norm_factor)
-  return_df <- count_df_long_continue %>%
-    inner_join(norm_fac, by = c("condition", "sublib", "sample")) %>%
-    mutate(norm_count = (count * med_count) / norm_factor) %>% 
-    mutate(count = round(norm_count,2)) %>%
-    select(-c(norm_factor,norm_count))
+    # 3. Normalize counts using (count * med_count / norm_factor)
+    return_df <- count_df_long_continue %>%
+      inner_join(norm_fac, by = c("condition", "sublib", "sample")) %>%
+      mutate(norm_count = (count * med_count) / norm_factor) %>% 
+      mutate(count = round(norm_count,2)) %>%
+      select(-c(norm_factor,norm_count))
   }
   
   return(return_df)
@@ -1198,12 +1267,6 @@ subsample_controls_func <- function(count_df_long, merged_sgRNA_df, percentage_k
   return(return_df)
 }
 
-
-if(subsample_controls == TRUE){
-  # count_df_long_old <- subsample_controls_func_old(count_df_long, merged_sgRNA_df)
-  count_df_long <- subsample_controls_func(count_df_long, merged_sgRNA_df)
-}
-
 count_df_long_to_wide <- function(count_df_long,
                                   print = TRUE,
                                   drop_0s = TRUE,
@@ -1275,11 +1338,25 @@ count_df_long_to_wide <- function(count_df_long,
   return(maude_counts_df)
 }
 
+if (subsample_controls == TRUE){
+  # count_df_long_old <- subsample_controls_func_old(count_df_long, merged_sgRNA_df)
+  count_df_long <- subsample_controls_func(count_df_long, merged_sgRNA_df)
+}
+
+if (!(norm_method %in% c("","control_median"))){
+  stop("Error: 'norm_method' must be one of '', 'control_median'. The script will now stop.")
+}
+if (norm_method == "control_median"){
+  count_df_long <- normalize_count_df_long(count_df_long,
+                                           norm_method = norm_method)
+}
+  
+  
 maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
                                          print = FALSE,
                                          drop_0s = drop_0s,
                                          recover_input = recover_input)
-if (!(method %in% c("","rep","sum"))){
+if (!(method %in% c("","rep","sum",'rep_sample','rep_sublib'))){
   stop("Error: 'method' must be one of '', 'rep', 'rep_sample', 'rep_sublib', or 'sum'. The script will now stop.")
 }
 
