@@ -238,7 +238,7 @@ process_folder_files <- function(folder_path,
                                  skip_list = c("L_L4_3","U_L4_3"),
                                  check_alignments = TRUE) {
   # List all matching files in the folder
-  files <- list.files(folder_path, pattern = "^[ILU]_L[1-6]_\\d+_dedup_idxstats\\.txt$", full.names = TRUE)
+  files <- list.files(folder_path, pattern = "^[ILU]_L\\d+_\\d+_dedup_idxstats\\.txt$", full.names = TRUE)
   
   # Read each file and combine them
   combined_df <- bind_rows(lapply(files, function(file) {
@@ -248,7 +248,7 @@ process_folder_files <- function(folder_path,
     # Skip entries from skip list
     if (name %in% skip_list){return(NULL)}
     # Extract condition (X), sublib (L#), and sample (#) using regex
-    matches <- str_match(file_name, "^([ILU])_L([1-6])_(\\d+)_dedup_idxstats\\.txt$")
+    matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_dedup_idxstats\\.txt$")
     
     if (is.na(matches[1])) {
       stop(paste("Filename does not match expected pattern:", file_name))
@@ -384,7 +384,7 @@ process_john_rf_data <- function(parent_dir,
     # Skip entries from skip list
     if (name %in% skip_list){next}
     # Extract condition (X), sublib (L#), and sample (#) using regex
-    pattern <- paste0("^([ILU])_L([1-6])_([1-9])", suffix_to_rm)
+    pattern <- paste0("^([ILU])_L(\\d+)_(\\d+)", suffix_to_rm)
     matches <- str_match(file_name, pattern)
     
     if (is.na(matches[1])) {
