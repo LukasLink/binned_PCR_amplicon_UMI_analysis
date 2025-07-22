@@ -43,7 +43,7 @@ same_controls_in_all_sublibraries <- TRUE # Set to False if the individual subli
 
 drop_0s <- FALSE            # bolean removes all guides with no UMIs/reads
 # End of user options
-############
+#############
 
 # Define command-line options
 option_list <- list(
