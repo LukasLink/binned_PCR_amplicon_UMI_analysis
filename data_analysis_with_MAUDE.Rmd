@@ -896,7 +896,7 @@ ggplot(count_ranked, aes(x = rank, y = count, color = condition)) +
 
 ## More detailed data exploration based on the long format read/umi counts 
 
-```{r Data_exploration_violin, eval=FALSE}
+```{r data_exploration_violin, eval=FALSE}
 plot_violin_by_sublib_sample <- function(count_df_long, norm_method = NULL) {
   df <- count_df_long
   
@@ -1109,7 +1109,7 @@ plot_violin_by_group_category_split_by_sublib <- function(df,
       ) +
       labs(
         title = paste(title_prefix,
-                      ifelse(include_targeting, "Targeting sgRNA", "Non-Targeting sgRNA"),
+                      ifelse(include_targeting, "targeting sgRNA", "non-targeting sgRNA"),
                       "–",
                       sublib_name, norm_title),
         x = "",
@@ -1404,6 +1404,12 @@ if (method == "sum"){
 ## Exploration of the read/umi counts in MAUDE format
 
 ```{r check_data_for_maude, eval=FALSE}
+if (data_type == "umis"){
+    data_name <- "UMIs"
+  }
+if (data_type == "reads"){
+    data_name <- "reads"
+  } 
 plot_maude_qc <- function(maude_counts_df, print = TRUE, add_0s = FALSE) {
   
   if (add_0s == TRUE){
@@ -1550,21 +1556,50 @@ control_sanity_check <- function(maude_counts_df){
   print(p_all)
 }
 
-
 control_sanity_check(maude_counts_df)
+
+# Change FALSE to input_recovery if desired
+if (FALSE){
+  title_sufix_1 <- "(without input recovery)"
+  title_sufix_2 <- "(with input recovery)"
+} else {
+  title_sufix_1 <- "(before MAUDE preperation)"
+  title_sufix_2 <- "(ready for MAUDE)"
+}
+
+# 1. Count unique sgRNAs per (condition, exp)
+sgRNA_counts <- count_df_long %>%
+  group_by(condition, exp) %>%
+  summarise(total_count = sum(count), .groups = "drop") %>%
+  mutate(Sample = interaction(condition, exp, drop = TRUE),
+         Bin = condition)  # for x-axis
+
+# 2. Plot
+o <- ggplot(sgRNA_counts, aes(x = Sample, y = total_count, fill = Bin)) +
+  geom_col() +
+  labs(
+    title = paste("Sum of", data_name, "per sample"),
+    x = "Sample",
+    y = paste("Sum of", data_name)
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
 # 1. Count unique sgRNAs per (condition, exp)
 sgRNA_counts <- count_df_long %>%
   group_by(condition, exp) %>%
   summarise(num_sgRNAs = n(), .groups = "drop") %>%
-  mutate(Bin = interaction(condition, exp, drop = TRUE))  # for x-axis
+  mutate(Sample = interaction(condition, exp, drop = TRUE),
+         Bin = condition)  # for x-axis
 
 # 2. Plot
-p <- ggplot(sgRNA_counts, aes(x = Bin, y = num_sgRNAs, fill = condition)) +
+p <- ggplot(sgRNA_counts, aes(x = Sample, y = num_sgRNAs, fill = Bin)) +
   geom_col() +
   labs(
-    title = "Number of sgRNA Entries per (Bin, Exp)",
-    x = "Bin x Experiment",
-    y = "sgRNA Entries"
+    title = paste("Number of sgRNA entries per sample",title_sufix_1),
+    x = "Sample",
+    y = "Number of sgRNA entries"
   ) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -1576,17 +1611,70 @@ sgRNA_counts <- count_df_long %>%
   mutate(Bin = condition)  # for x-axis
 
 # 2. Plot
-q <- ggplot(sgRNA_counts, aes(x = Bin, y = num_sgRNAs, fill = condition)) +
+q <- ggplot(sgRNA_counts, aes(x = Bin, y = num_sgRNAs, fill = Bin)) +
   geom_col() +
   labs(
-    title = "Number of sgRNA Entries per Bin",
+    title = paste("Number of sgRNA entries per bin", title_sufix_1),
     x = "Bin",
-    y = "sgRNA Entries"
+    y = "sgRNA entries"
   ) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
 
-print(q)        
+totals_df <- maude_counts_df %>% 
+  summarise(
+    input = sum(!is.na(input)),
+    upper = sum(!is.na(upper)),
+    lower = sum(!is.na(lower))
+  ) %>% 
+  pivot_longer(
+    cols       = everything(),
+    names_to   = "Bin",
+    values_to  = "count_non_na"
+  )
+
+r <- ggplot(totals_df, aes(x = Bin, y = count_non_na, fill = Bin)) +
+  geom_col() +
+  labs(
+    title = paste("Number of sgRNA entries per bin", title_sufix_2),
+    x = "Bin",
+    y = "Number of sgRNA entries"
+  ) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+
+# 1. Summarise total counts per condition
+totals_df <- maude_counts_df %>% 
+  summarise(
+    input = sum(input, na.rm=TRUE),
+    upper = sum(upper, na.rm=TRUE),
+    lower = sum(lower, na.rm=TRUE)
+  ) %>% 
+  pivot_longer(
+    cols = everything(),
+    names_to  = "Bin",
+    values_to = "total_count"
+  )
+
+# 2. Plot
+s <- ggplot(totals_df, aes(x = Bin, y = total_count, fill = Bin)) +
+  geom_col() +
+  labs(
+    title = paste("Sum of", data_name, "per bin"),
+    x     = "Bin",
+    y     = "Total counts"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+
+print(q)
+print(r)
+print(s)
+print(o)
 print(p)        
 plot_maude_qc(maude_counts_df)
 plot_maude_qc(maude_counts_df, add_0s = TRUE)
