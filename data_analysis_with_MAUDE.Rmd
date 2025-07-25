@@ -36,8 +36,8 @@ skip_list       <-  c("L_L4_3","U_L4_3")
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" 
 data_type           <- "umis"   # can be "reads" or "umis"
-method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
-norm_method         <- ""       # can be "control_median" or ""
+method              <- "rep"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+norm_method         <- ""       # can be "control_median" or "" currently broken!!! MAUDE returns NaN! -> set to ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
 
@@ -166,9 +166,14 @@ if (drop_0s) {
 # Construct the file suffix
 #===============================================================================
 
-file_suffix <- paste0("_", pipeline, "_", data_type, "_", method, norm_method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix, ".rds")
+file_suffix <- paste0("_", pipeline, "_", data_type, "_", method, "_", norm_method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix, ".rds")
+file_suffix <- sub("___","_",file_suffix)
 file_suffix <- sub("__","_",file_suffix)
 file_suffix <- sub("_\\.","\\.",file_suffix)
+file_info_suffix <- paste0(pipeline, "_", data_type, "_", method, "_", norm_method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix)
+file_info_suffix <- sub("___","_",file_info_suffix)
+file_info_suffix <- sub("__","_",file_info_suffix)
+file_info_suffix <- sub("_$", "", file_info_suffix)
 # Print the final file suffix
 cat("File Suffix: ", file_suffix, "\n")
 
@@ -1809,27 +1814,6 @@ check_UMI_counts <- function(guide_df, reference_df) {
   # Return the result as a dataframe
   return(result_df)
 }
-
-# check_df <- check_UMI_counts(MAUDE_guide_stats_lukas_reads_RI,merged_sgRNA_df)
-
-
-# For looking at all the different methods
-# Hits_lukas_umis <- add_info_wrapper("lukas_umis")
-# Hits_lukas_umis_RI <- add_info_wrapper("lukas_umis_RI")
-# Hits_lukas_umis_sum_RI <- add_info_wrapper("lukas_umis_sum_RI")
-# Hits_lukas_umis_rep_RI <- add_info_wrapper("lukas_umis_rep_RI")
-# Hits_lukas_umis_D0 <- add_info_wrapper("lukas_umis_D0")
-# Hits_lukas_umis_RI_D0 <- add_info_wrapper("lukas_umis_RI_D0")
-# Hits_lukas_reads <- add_info_wrapper("lukas_reads")
-# Hits_lukas_reads_RI <- add_info_wrapper("lukas_reads_RI")
-# Hits_lukas_reads_D0 <- add_info_wrapper("lukas_reads_D0")
-# Hits_lukas_reads_RI_D0 <- add_info_wrapper("lukas_reads_RI_D0")
-# Hits_john_rf_umis <- add_info_wrapper("john_rf_umis")
-# Hits_john_rf_umis_RI <- add_info_wrapper("john_rf_umis_RI")
-# Hits_john_rf_umis_D0 <- add_info_wrapper("john_rf_umis_D0")
-# Hits_john_rf_umis_RI_D0 <- add_info_wrapper("john_rf_umis_RI_D0")
-
-
 ```
 
 ```{r QQplot, eval=FALSE}
@@ -1953,7 +1937,7 @@ compare_versions <- function(base_name, file_path = "/home/link/NB_EXP030/MAUDE_
 }
 
 
-compare_versions <- function(file_path = "/home/link/NB_EXP030/MAUDE_gene_stats",
+compare_versions <- function(file_path = get("rds_output_folder", envir = .GlobalEnv),
                              base_names = c("lukas_reads", "john_reads", "lukas_umis", "john_rf_umis")) {
 
   # Create an empty list to store all comparisons
@@ -2053,9 +2037,11 @@ compare_versions <- function(file_path = "/home/link/NB_EXP030/MAUDE_gene_stats"
 }
 
 
-generate_qq_plots <- function(base_name, file_path = "/home/link/NB_EXP030/MAUDE_gene_stats") {
-  suffixes <- c("", "_RI", "_D0", "_RI_D0")
+generate_qq_plots <- function(base_name,
+                              file_path = get("rds_output_folder", envir = .GlobalEnv),
+                              suffixes <- c("", "_RI", "_D0", "_RI_D0")) {
   
+  file_path <- paste0(file_path, "MAUDE_gene_stats")
   # Use invisible() to suppress unwanted NULL outputs
   invisible(lapply(suffixes, function(suffix) {
     # Create the file path for each suffix
@@ -2073,20 +2059,27 @@ generate_qq_plots <- function(base_name, file_path = "/home/link/NB_EXP030/MAUDE
 }
 
 
-# compare_versions()
-
-
+#===============================================================================
+# Batch generate qq plots
+# add suffixes <- c(list_of_suffixes_without_.rds); example <- c("", "_RI")
+#===============================================================================
 generate_qq_plots("lukas_reads")
 generate_qq_plots("lukas_umis")
 generate_qq_plots("john_reads")
 generate_qq_plots("john_rf_umis")
 
+#===============================================================================
+# Create Hit lists
+#===============================================================================
+Hits_current_settings <- add_info_wrapper(file_info_suffix)
 Hits_lukas_umis <- add_info_wrapper("lukas_umis")
 Hits_lukas_umis_RI <- add_info_wrapper("lukas_umis_RI")
 Hits_lukas_umis_sum_RI <- add_info_wrapper("lukas_umis_sum_RI")
 Hits_lukas_umis_rep_RI <- add_info_wrapper("lukas_umis_rep_RI")
 Hits_lukas_reads <- add_info_wrapper("lukas_reads")
 Hits_lukas_reads_RI <- add_info_wrapper("lukas_reads_RI")
+Hits_lukas_reads_rep_RI <- add_info_wrapper("lukas_reads_rep_RI")
+Hits_lukas_reads_sum_RI <- add_info_wrapper("lukas_reads_sum_RI")
 Hits_lukas_reads_RI_rf <- add_info_wrapper("lukas_reads_RIrf")
 Hits_lukas_reads_sum_RI_rf <- add_info_wrapper("lukas_reads_sum_RIrf")
 Hits_lukas_reads_rep_RI_rf <- add_info_wrapper("lukas_reads_rep_RIrf")
@@ -2100,7 +2093,9 @@ Hits_john_reads_RI <- add_info_wrapper("john_reads_RI")
 # Hits_john_reads_RI_rf <- add_info_wrapper("john_reads_RI_rf")
 Hits_john_reads_sum_RI_rf <- add_info_wrapper("john_reads_sum_RI_rf")
 Hits_john_reads_rep_RI_rf <- add_info_wrapper("john_reads_rep_RI_rf")
-
+#===============================================================================
+# Intersect 2 different Hit lists
+#===============================================================================
 top_1000_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=1000)
 top_100_umis_intersect <- get_top_N_intersect(Hits_lukas_umis,Hits_john_umis, N=100)
 top_50_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=50)
@@ -2110,6 +2105,14 @@ top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_lukas_reads_sum_RI,Hit
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=100), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_100.rds")
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=50), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_50.rds")
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI,N=20), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_20.rds")
+#===============================================================================
+# Make individual qq-plots for the p-values of the hits. 
+#===============================================================================
+plot_qq_maude(Hits_lukas_umis_RI, "UMIs (one replicate method)")
+plot_qq_maude(Hits_lukas_umis_sum_RI, "UMIs (sum method)")
+plot_qq_maude(Hits_lukas_reads_RI, "reads (one replicate method)")
+plot_qq_maude(Hits_lukas_reads_sum_RI, "reads (sum method)")
+
 
 plot_qq_maude(Hits_lukas_reads, "Reads (no IR no RF)")
 plot_qq_maude(Hits_john_reads, "John Reads (no IR no RF)")
@@ -2211,27 +2214,10 @@ results_methods <- compare_methods(N = 50)
 # 
 # top_1000_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john)
 # top_100_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john, N=100)
-# 
-# maude_gene_stats_lukas <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_umis.rds"))
-# maude_gene_stats_john <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_john_rf_umis.rds"))
-# 
-# top_1000_umis_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john)
-# top_100_umis_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john, N=100)
-# 
-# maude_gene_stats_RI_D0 <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_reads_RI_D0.rds"))
-# maude_gene_stats_old <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_reads.rds"))
-# 
-# top_1000_reads_intersect_RI <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john)
-# top_100_reads_intersect_RI <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john, N=100)
-# 
-# maude_gene_stats_RI_D0 <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_umis_RI_D0.rds"))
-# maude_gene_stats_old <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_umis.rds"))
-# 
-# top_1000_umis_intersect_RI <- get_top_N_intersect(maude_gene_stats_RI_D0,maude_gene_stats_old)
-# top_100_umis_intersect_RI <- get_top_N_intersect(maude_gene_stats_RI_D0,maude_gene_stats_old, N=100)
+
 ```
 ``` {r basic_export, eval=TRUE}
-export_df <- add_info_wrapper(file_suffix)
+export_df <- add_info_wrapper(file_info_suffix)
 # Write to Excel
 csv_file_path <- sub(".rds",".csv",paste0(output_folder, "MAUDE_Hits", file_suffix))
 write_csv(export_df, csv_file_path)
