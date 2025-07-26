@@ -14,6 +14,7 @@ library(conflicted)
 library(MAUDE)
 library(ggplot2)
 library(optparse)
+library(ggrepel)
 
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
@@ -36,7 +37,7 @@ skip_list       <-  c("L_L4_3","U_L4_3")
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" 
 data_type           <- "umis"   # can be "reads" or "umis"
-method              <- "rep"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- ""       # can be "control_median" or "" currently broken!!! MAUDE returns NaN! -> set to ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
@@ -2216,6 +2217,111 @@ results_methods <- compare_methods(N = 50)
 # top_100_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john, N=100)
 
 ```
+
+```{r Waterfall_plot, eval=FALSE}
+Hits_current_settings <- add_info_wrapper(file_info_suffix)
+
+plot_significance_by_rank <- function(Hits_df,
+                                      mark_cntrl = TRUE,
+                                      mark_special = NULL,
+                                      mark_N_top_hits = 0) {
+  # Create rank column
+  Hits_df <- Hits_df %>%
+    mutate(rank = rank(significanceZ, ties.method = "first"))
+
+  # Start base plot
+  p <- ggplot(Hits_df, aes(x = rank, y = significanceZ)) +
+    geom_point(color = "lightgrey", size = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.3) +
+    theme_bw() +
+    labs(
+      x = "Gene rank",
+      y = "Significance Z-score",
+      title = "Significance Z-score by gene rank"
+    )
+
+  # Mark control (NA in symbol column)
+  if (mark_cntrl && "symbol" %in% names(Hits_df)) {
+    p <- p + geom_point(
+      data = Hits_df %>% filter(is.na(symbol)),
+      aes(x = rank, y = significanceZ),
+      color = "blue", size = 1.5
+    ) +
+      annotate("rect",
+               xmin = max(Hits_df$rank) - 3000,
+               xmax = max(Hits_df$rank) - 0,
+               ymin = min(Hits_df$significanceZ) + 0.2,
+               ymax = min(Hits_df$significanceZ) + 0.7,
+               fill = "white", color = "black", size = 0.3) +
+      annotate("point",
+               x = max(Hits_df$rank) - 2800,
+               y = min(Hits_df$significanceZ) + 0.45,
+               color = "blue", size = 2) +
+      annotate("text",
+               x = max(Hits_df$rank) - 2600,
+               y = min(Hits_df$significanceZ) + 0.45,
+               label = "control sgRNA", hjust = 0, size = 3)
+  }
+
+  # Mark special symbol
+  if (!is.null(mark_special) && "symbol" %in% names(Hits_df)) {
+    special_df <- Hits_df %>% filter(symbol == mark_special)
+    if (nrow(special_df) > 0) {
+      p <- p +
+        geom_point(data = special_df, aes(x = rank, y = significanceZ),
+                   shape = 17, color = "orange", size = 4) +
+        geom_text_repel(data = special_df,
+                        aes(x = rank, y = significanceZ, label = symbol),
+                        color = "orange",
+                        size = 4,
+                        box.padding = 0.5,
+                        force = 4)
+    }
+  }
+
+  # Mark top hits (both ends), excluding special symbols
+  if (mark_N_top_hits >= 1 && "symbol" %in% names(Hits_df)) {
+    top_hits_df <- Hits_df %>%
+      filter(!(symbol %in% mark_special)) %>%  # exclude special symbol
+      arrange(significanceZ) %>%
+      slice(c(1:mark_N_top_hits, (n() - mark_N_top_hits + 1):n()))
+    
+  top_hits_pos <- top_hits_df %>% filter(significanceZ >= 0)
+  top_hits_neg <- top_hits_df %>% filter(significanceZ < 0)
+  
+    p <- p +
+      geom_point(data = top_hits_df, aes(x = rank, y = significanceZ),
+                 color = "red", size = 1.5) +
+      geom_text_repel(
+        data = top_hits_df,
+        aes(x = rank, y = significanceZ, label = symbol),
+        color = "red",           # or "orange" for special symbol
+        size = 3,
+        box.padding = 0.8,       # space around the label box
+        point.padding = 0.6,     # space around the point
+        force = 10,               # strength of repulsion between labels
+        force_pull = 0.5,          # how strongly labels are pulled back to points
+        max.overlaps = Inf,      # allow all overlaps to be considered
+        max.time = 5,           # more time for optimization
+        min.segment.length = 0,
+        segment.color = "red",# line color from label to point
+        segment.size = 0.3       # line thickness
+      )
+  }
+  return(p)
+}
+
+# Basic plot
+# plot_significance_by_rank(Hits_current_settings)
+
+# Mark a special gene and top 10 hits
+plot_significance_by_rank(Hits_current_settings, mark_special = "AHSA1", mark_N_top_hits = 3)
+
+# Just highlight controls
+# plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
+
+```
+
 ``` {r basic_export, eval=TRUE}
 export_df <- add_info_wrapper(file_info_suffix)
 # Write to Excel
