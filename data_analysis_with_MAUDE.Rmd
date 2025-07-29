@@ -214,12 +214,14 @@ merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
 The following codeblock exists to do some basic familiarization with MAUDE,
 and to troubleshoot it if things fail. 
 ```{r make_example_df, eval=FALSE}
+if (FALSE){
+  getAnywhere(findGuideHitsAllScreens)
+  getAnywhere(getElementwiseStats)
+  getAnywhere(findGuideHits)
+  getAnywhere(getZScalesWithNTGuides())
+  getAnywhere(optim())
+}
 
-getAnywhere(findGuideHitsAllScreens)
-getAnywhere(getElementwiseStats)
-getAnywhere(findGuideHits)
-getAnywhere(getZScalesWithNTGuides())
-getAnywhere(optim())
 
 # Create the data for maude
 maude_example_df_1 <- data.frame(sgRNA = c(LETTERS[1:6], "CONTROL_C_NONTARG_G", "CONTROL_C_NONTARG_H", "CONTROL_C_I", "CONTROL_C_J"),
