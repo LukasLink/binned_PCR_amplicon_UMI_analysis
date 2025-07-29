@@ -36,8 +36,8 @@ skip_list       <-  c("L_L4_3","U_L4_3")
 
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
-data_type           <- "reads"   # can be "reads" or "umis"
-method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+data_type           <- "umis"   # can be "reads" or "umis"
+method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
@@ -2068,6 +2068,24 @@ compare_versions <- function(file_path = get("rds_output_folder", envir = .Globa
 
   return(comparisons)
 }
+plot_all_qq_plots <- function(dir_path) {
+  # List all files in the directory ending with ".rds"
+  rds_files <- list.files(dir_path, pattern = "\\.rds$", full.names = TRUE)
+
+  # Filter files that start with "MAUDE_guide_stats_"
+  matching_files <- rds_files[grepl("MAUDE_guide_stats_", basename(rds_files))]
+
+  # Loop over each matching file
+  for (file in matching_files) {
+    # Extract the info_suffix
+    filename <- basename(file)
+    info_suffix <- sub("^MAUDE_guide_stats_", "", sub("\\.rds$", "", filename))
+
+    # Run the commands
+    Hits_current_settings <- add_info_wrapper(info_suffix)
+    plot_qq_maude(Hits_current_settings, info_suffix)
+  }
+}
 
 
 generate_qq_plots <- function(base_name,
@@ -2091,9 +2109,13 @@ generate_qq_plots <- function(base_name,
   }))
 }
 
-
 #===============================================================================
-# Batch generate qq plots
+# Batch generate ALL qq plots
+# add suffixes <- c(list_of_suffixes_without_.rds); example <- c("", "_RI")
+#===============================================================================
+plot_all_qq_plots(rds_output_folder)
+#===============================================================================
+# Batch generate specific qq plots
 # add suffixes <- c(list_of_suffixes_without_.rds); example <- c("", "_RI")
 #===============================================================================
 generate_qq_plots("lukas_reads")
@@ -2109,10 +2131,14 @@ Hits_lukas_umis <- add_info_wrapper("lukas_umis")
 Hits_lukas_umis_RI <- add_info_wrapper("lukas_umis_RI")
 Hits_lukas_umis_sum_RI <- add_info_wrapper("lukas_umis_sum_RI")
 Hits_lukas_umis_rep_RI <- add_info_wrapper("lukas_umis_rep_RI")
+Hits_lukas_umis_control_median_RI <- add_info_wrapper("lukas_umis_control_median_RI")
+Hits_lukas_umis_sum_control_median_RI <- add_info_wrapper("lukas_umis_sum_control_median_RI")
 Hits_lukas_reads <- add_info_wrapper("lukas_reads")
 Hits_lukas_reads_RI <- add_info_wrapper("lukas_reads_RI")
 Hits_lukas_reads_rep_RI <- add_info_wrapper("lukas_reads_rep_RI")
 Hits_lukas_reads_sum_RI <- add_info_wrapper("lukas_reads_sum_RI")
+Hits_lukas_reads_control_median_RI <- add_info_wrapper("lukas_reads_control_median_RI")
+Hits_lukas_reads_sum_control_median_RI <- add_info_wrapper("lukas_reads_sum_control_median_RI")
 Hits_lukas_reads_RI_rf <- add_info_wrapper("lukas_reads_RIrf")
 Hits_lukas_reads_sum_RI_rf <- add_info_wrapper("lukas_reads_sum_RIrf")
 Hits_lukas_reads_rep_RI_rf <- add_info_wrapper("lukas_reads_rep_RIrf")
@@ -2135,7 +2161,9 @@ top_50_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_
 top_20_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=20)
 top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_lukas_reads_sum_RI,Hits_lukas_reads_rep_RI_rf, N=50)
 top_10_umis_intersect___sum <- get_top_N_intersect(Hits_lukas_umis_sum_RI,Hits_lukas_umis_RI, N=10)
-
+top_15_umis_intersect_control_median <- get_top_N_intersect(Hits_lukas_umis_sum_control_median_RI,Hits_lukas_umis_control_median_RI, N=100)
+top_10_umis_intersect_both <- get_top_N_intersect(top_15_umis_intersect_control_median,top_10_umis_intersect___sum, N=10)
+top_10_umis_sum_control_median <- get_top_N_intersect(Hits_lukas_umis_sum_control_median_RI,Hits_lukas_umis_sum_control_median_RI, N=10)
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=100), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_100.rds")
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=50), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_50.rds")
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI,N=20), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_20.rds")
@@ -2147,6 +2175,10 @@ plot_qq_maude(Hits_lukas_umis_sum_RI, "UMIs (sum method)")
 plot_qq_maude(Hits_lukas_reads_RI, "reads (one replicate method)")
 plot_qq_maude(Hits_lukas_reads_sum_RI, "reads (sum method)")
 
+plot_qq_maude(Hits_lukas_umis_control_median_RI, "UMIs (one replicate method)(normalized)")
+plot_qq_maude(Hits_lukas_umis_sum_control_median_RI, "UMIs (sum method)(normalized)")
+plot_qq_maude(Hits_lukas_reads_control_median_RI, "reads (one replicate method)(normalized)")
+plot_qq_maude(Hits_lukas_reads_sum_control_median_RI, "reads (sum method)(normalized)")
 
 plot_qq_maude(Hits_lukas_reads, "Reads (no IR no RF)")
 plot_qq_maude(Hits_john_reads, "John Reads (no IR no RF)")
@@ -2257,7 +2289,8 @@ Hits_current_settings <- add_info_wrapper(file_info_suffix)
 plot_significance_by_rank <- function(Hits_df,
                                       mark_cntrl = TRUE,
                                       mark_special = NULL,
-                                      mark_N_top_hits = 0) {
+                                      mark_N_top_hits = 0,
+                                      box_padding = 0.8) {
   # Create rank column
   Hits_df <- Hits_df %>%
     mutate(rank = rank(significanceZ, ties.method = "first"))
@@ -2330,7 +2363,7 @@ plot_significance_by_rank <- function(Hits_df,
         aes(x = rank, y = significanceZ, label = symbol),
         color = "red",           # or "orange" for special symbol
         size = 3,
-        box.padding = 0.8,       # space around the label box
+        box.padding = box_padding,       # space around the label box
         point.padding = 0.6,     # space around the point
         force = 10,               # strength of repulsion between labels
         force_pull = 0.5,          # how strongly labels are pulled back to points
@@ -2348,7 +2381,10 @@ plot_significance_by_rank <- function(Hits_df,
 plot_significance_by_rank(Hits_current_settings)
 
 # Mark a special gene and top 10 hits
-plot_significance_by_rank(Hits_current_settings, mark_special = "AHSA1", mark_N_top_hits = 3)
+plot_significance_by_rank(Hits_current_settings,
+                          mark_special = "AHSA1",
+                          mark_N_top_hits = 3,
+                          box_padding = 1.0)
 
 # Just highlight controls
 plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
