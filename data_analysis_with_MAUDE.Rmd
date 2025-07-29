@@ -37,7 +37,7 @@ skip_list       <-  c("L_L4_3","U_L4_3")
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" 
 data_type           <- "umis"   # can be "reads" or "umis"
-method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- ""       # can be "control_median" or "" currently broken!!! MAUDE returns NaN! -> set to ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
@@ -211,17 +211,21 @@ merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
 
 ```
 
-
+The following codeblock exists to do some basic familiarization with MAUDE,
+and to troubleshoot it if things fail. 
 ```{r make_example_df, eval=FALSE}
+
 getAnywhere(findGuideHitsAllScreens)
 getAnywhere(getElementwiseStats)
 getAnywhere(findGuideHits)
 getAnywhere(getZScalesWithNTGuides())
+getAnywhere(optim())
 
+# Create the data for maude
 maude_example_df_1 <- data.frame(sgRNA = c(LETTERS[1:6], "CONTROL_C_NONTARG_G", "CONTROL_C_NONTARG_H", "CONTROL_C_I", "CONTROL_C_J"),
-                               input = c(6, 4, 5, 8, 8, 7, 5, 6, 7, 5),
-                               upper = c(6, 4, 1, 3, 4, 2, 0, 1, 3, 2),
-                               lower = c(2, 0, 5, 8, 3, 1, 0, 2, 2, 1),
+                               input = c(4, 3, 5, 3, 8, 7, 5, 6, 7, 5),
+                               upper = c(0, 9, 5, 0, 4, 2, 0, 1, 3, 2),
+                               lower = c(4, 4, 1, 1, 3, 1, 0, 2, 2, 1),
                                sublib = "sublib_1")
 maude_example_df_2 <- maude_example_df_1 %>%
   mutate(input = input + 1,
@@ -233,6 +237,32 @@ maude_example_df_2 <- maude_example_df_1 %>%
                                     TRUE ~ FALSE # Anything else → FALSE) %>%
                                     )
   )
+
+# Define bin stats with 10% for lower/upper each
+lower_bin_end = 0.1
+upper_bin_start = 1 - 0.1
+
+maude_example_bins <- tibble(
+  Bin = rep(c("upper", "lower"), length(unique(maude_example_df_2[["exp"]]))),  # Repeat 'upper' and 'lower' for each exp
+  exp = rep(unique(maude_example_df_2[["exp"]]), each = 2),  # Repeat each exp value twice
+  binStartQ = ifelse(rep(c("upper", "lower"), length(unique(maude_example_df_2[["exp"]]))) == "lower", 0.001, upper_bin_start),
+  binEndQ = ifelse(rep(c("upper", "lower"), length(unique(maude_example_df_2[["exp"]]))) == "lower", lower_bin_end, 0.999),
+  fraction = binEndQ - binStartQ,
+  binStartZ = qnorm(binStartQ),
+  binEndZ = qnorm(binEndQ)
+) %>%
+  select(Bin, binStartQ, binEndQ, fraction, binStartZ, binEndZ, exp) %>%
+  as.data.frame()
+
+
+maude_example_guide_stats <- findGuideHitsAllScreens(
+  experiments = unique(maude_example_df_2['exp']),
+  countDataFrame = maude_example_df_2,
+  binStats = maude_example_bins,
+  sortBins = c('lower', 'upper'),
+  unsortedBin = 'input',
+  negativeControl = 'isNontargeting'
+)
 ```
 
 ## Generate the long format read/umi counts either from my pipline or from johns
@@ -2102,6 +2132,7 @@ top_100_umis_intersect <- get_top_N_intersect(Hits_lukas_umis,Hits_john_umis, N=
 top_50_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=50)
 top_20_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=20)
 top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_lukas_reads_sum_RI,Hits_lukas_reads_rep_RI_rf, N=50)
+top_10_umis_intersect___sum <- get_top_N_intersect(Hits_lukas_umis_sum_RI,Hits_lukas_umis_RI, N=10)
 
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=100), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_100.rds")
 saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=50), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_50.rds")
@@ -2312,13 +2343,13 @@ plot_significance_by_rank <- function(Hits_df,
 }
 
 # Basic plot
-# plot_significance_by_rank(Hits_current_settings)
+plot_significance_by_rank(Hits_current_settings)
 
 # Mark a special gene and top 10 hits
 plot_significance_by_rank(Hits_current_settings, mark_special = "AHSA1", mark_N_top_hits = 3)
 
 # Just highlight controls
-# plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
+plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
 
 ```
 
