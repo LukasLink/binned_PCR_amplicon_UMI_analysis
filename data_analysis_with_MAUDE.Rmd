@@ -19,6 +19,7 @@ library(ggrepel)
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::slice)
 
 #===============================================================================
 # User Options (can be overrided via CLI)
@@ -1124,12 +1125,29 @@ plot_violin_by_group_category_split_by_sublib <- function(df,
 
   for (sublib_name in unique(filtered_df$sublib)) {
     sub_df <- filtered_df %>% filter(sublib == sublib_name)
-    label_df <- count_summary %>% filter(interaction(condition, exp) %in% unique(interaction(sub_df$condition, sub_df$exp)))
-
+    # Levels used by this sub-plot’s x axis
+    x_levels <- levels(interaction(sub_df$condition, sub_df$exp, drop = TRUE))
+  
+    # Build label_df with matching factor levels
+    label_df <- count_summary %>%
+      filter(interaction(condition, exp, drop = TRUE) %in%
+               unique(interaction(sub_df$condition, sub_df$exp, drop = TRUE))) %>%
+      mutate(
+        group_fac = factor(interaction(condition, exp, drop = TRUE), levels = x_levels),
+        x_center  = as.numeric(group_fac)   # centers now 1..k, aligned with this sub-plot
+      )
+    
     # Plot with violin, boxplot, and text
     p <- ggplot(sub_df, aes(x = interaction(condition, exp), y = count)) +
       geom_violin(fill = viol_col, color = NA, scale = "width", trim = FALSE) +
       geom_boxplot(width = 0.1, outlier.size = 0.2, fill = box_col) +
+      geom_rect(
+        data = label_df,
+        aes(xmin = x_center - 0.3, xmax = x_center + 0.3,
+            ymin = y_limit - y_limit/8 - 0.1, ymax = y_limit + 0.1),
+        inherit.aes = FALSE,
+        fill = "white", color = "black", linewidth = 0.15
+      ) +
       geom_text(
         data = label_df,
         aes(x = group, y = y_limit, label = total_count),
@@ -1621,7 +1639,9 @@ o <- ggplot(sgRNA_counts, aes(x = Sample, y = total_count, fill = Bin)) +
     y = paste("Sum of", data_name)
   ) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        legend.position = "none")
 
 
 # 1. Count unique sgRNAs per (condition, exp)
@@ -1640,7 +1660,9 @@ p <- ggplot(sgRNA_counts, aes(x = Sample, y = num_sgRNAs, fill = Bin)) +
     y = "Number of sgRNA entries"
   ) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        legend.position = "none")
 
 # 1. Count unique sgRNAs per (condition, exp)
 sgRNA_counts <- count_df_long %>%
@@ -1657,7 +1679,9 @@ q <- ggplot(sgRNA_counts, aes(x = Bin, y = num_sgRNAs, fill = Bin)) +
     y = "sgRNA entries"
   ) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        legend.position = "none")
 
 totals_df <- maude_counts_df %>% 
   summarise(
@@ -1679,7 +1703,9 @@ r <- ggplot(totals_df, aes(x = Bin, y = count_non_na, fill = Bin)) +
     y = "Number of sgRNA entries"
   ) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.text.y = element_text(face = "bold"),
+        legend.position = "none")
 
 # 1. Summarise total counts per condition
 totals_df <- maude_counts_df %>% 
@@ -2290,7 +2316,8 @@ plot_significance_by_rank <- function(Hits_df,
                                       mark_cntrl = TRUE,
                                       mark_special = NULL,
                                       mark_N_top_hits = 0,
-                                      box_padding = 0.8) {
+                                      box_padding = 0.8,
+                                      no_text = FALSE) {
   # Create rank column
   Hits_df <- Hits_df %>%
     mutate(rank = rank(significanceZ, ties.method = "first"))
@@ -2352,31 +2379,36 @@ plot_significance_by_rank <- function(Hits_df,
       arrange(significanceZ) %>%
       slice(c(1:mark_N_top_hits, (n() - mark_N_top_hits + 1):n()))
     
-  top_hits_pos <- top_hits_df %>% filter(significanceZ >= 0)
-  top_hits_neg <- top_hits_df %>% filter(significanceZ < 0)
-  
-    p <- p +
-      geom_point(data = top_hits_df, aes(x = rank, y = significanceZ),
-                 color = "red", size = 1.5) +
-      geom_text_repel(
-        data = top_hits_df,
-        aes(x = rank, y = significanceZ, label = symbol),
-        color = "red",           # or "orange" for special symbol
-        size = 3,
-        box.padding = box_padding,       # space around the label box
-        point.padding = 0.6,     # space around the point
-        force = 10,               # strength of repulsion between labels
-        force_pull = 0.5,          # how strongly labels are pulled back to points
-        max.overlaps = Inf,      # allow all overlaps to be considered
-        max.time = 5,           # more time for optimization
-        min.segment.length = 0,
-        segment.color = "red",# line color from label to point
-        segment.size = 0.3       # line thickness
-      )
+    top_hits_pos <- top_hits_df %>% filter(significanceZ >= 0)
+    top_hits_neg <- top_hits_df %>% filter(significanceZ < 0)
+    
+    if (no_text == TRUE){
+      p <- p +
+        geom_point(data = top_hits_df, aes(x = rank, y = significanceZ),
+                   color = "red", size = 1.5)
+    } else {
+      p <- p +
+        geom_point(data = top_hits_df, aes(x = rank, y = significanceZ),
+                   color = "red", size = 1.5) +
+        geom_text_repel(
+          data = top_hits_df,
+          aes(x = rank, y = significanceZ, label = symbol),
+          color = "red",           # or "orange" for special symbol
+          size = 3,
+          box.padding = box_padding,       # space around the label box
+          point.padding = 0.6,     # space around the point
+          force = 10,               # strength of repulsion between labels
+          force_pull = 0.5,          # how strongly labels are pulled back to points
+          max.overlaps = Inf,      # allow all overlaps to be considered
+          max.time = 5,           # more time for optimization
+          min.segment.length = 0,
+          segment.color = "red",# line color from label to point
+          segment.size = 0.3       # line thickness
+        )
+    }
   }
   return(p)
 }
-
 # Basic plot
 plot_significance_by_rank(Hits_current_settings)
 
@@ -2384,8 +2416,13 @@ plot_significance_by_rank(Hits_current_settings)
 plot_significance_by_rank(Hits_current_settings,
                           mark_special = "AHSA1",
                           mark_N_top_hits = 3,
-                          box_padding = 1.0)
+                          box_padding = 0.6)
 
+plot_significance_by_rank(Hits_current_settings,
+                          mark_special = "AHSA1",
+                          mark_N_top_hits = 3,
+                          box_padding = 0.6,
+                          no_text = TRUE)
 # Just highlight controls
 plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
 
