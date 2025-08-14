@@ -11,8 +11,10 @@
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
+################################################################################
 # USER OPTIONS - Adjust these as needed
-##########
+################################################################################
+
 # Input and output folder paths
 INPUT_FOLDER="/scratch/link/RAW/NB_EXP030"
 OUTPUT_FOLDER="/scratch/link/NB_EXP030"
@@ -38,9 +40,28 @@ SKIP_GROUPING=true
 SKIP_FILTERING=false
 SKIP_DEDUPLICATION=false
 SKIP_IDXSTATS=false
-
+################################################################################
 # END OF USER OPTIONS
-##########
+################################################################################
+
+# Function to adjust the paths to make them "//" proof
+normalize_path() {
+  local p="${1:-}"
+
+  [[ -z "$p" ]] && { printf '%s' "$p"; return; }
+
+  while [[ "$p" == *"//"* ]]; do
+    p="${p//\/\//\/}"
+  done
+
+  while [[ "$p" == */ && "$p" != "/" ]]; do
+    p="${p%/}"
+  done
+
+  printf '%s' "$p"
+}
+INPUT_FOLDER="$(normalize_path "$INPUT_FOLDER")"
+OUTPUT_FOLDER="$(normalize_path "$OUTPUT_FOLDER")"
 
 # Define necessary subfolders
 QC_FILTERED="$OUTPUT_FOLDER/QC_filtered"
@@ -61,7 +82,7 @@ if [ "$SKIP_QC" != "true" ]; then
     ml seqtk/1.3-GCC-11.2.0
 
     # Process each file in the input folder
-    for file in "$INPUT_FOLDER"/*.fastq.gz; do
+    for file in "$INPUT_FOLDER"/*.{fastq,txt}.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
         seqtk seq -q20 -Q20 -L50 -n N "$file" | gzip > "$QC_FILTERED/$filename"
@@ -78,7 +99,7 @@ if [ "$SKIP_UMI_EXTRACTION" != "true" ]; then
     
     
     # Extract UMIs
-    for file in "$QC_FILTERED"/*.fastq.gz; do
+    for file in "$QC_FILTERED"/*.{fastq,txt}.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
         umi_tools extract --stdin "$file" --stdout "$UMI_EXTRACTED/$filename" --extract-method=regex --bc-pattern="$REGEX_PATTERN"
@@ -115,7 +136,7 @@ if [ "$SKIP_MAPPING" != "true" ]; then
     # Load STAR module
     module purge
     ml STAR/2.7.11b-GCC-13.2.0
-    for file in "$UMI_EXTRACTED"/*.fastq.gz; do
+    for file in "$UMI_EXTRACTED"/*.{fastq,txt}.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
         STAR --runThreadN "$NUM_THREADS" --genomeDir "$STAR_INDEX/NOPE" --readFilesCommand zcat \
