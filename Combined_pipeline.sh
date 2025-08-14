@@ -76,13 +76,21 @@ LOGS="$OUTPUT_FOLDER/logs"
 # Create necessary output directories
 mkdir -p "$QC_FILTERED" "$UMI_EXTRACTED" "$STAR_INDEX" "$MAPPED" "$GROUPED" "$READ_FILTERED" "$DEDUP" "$LOGS" "$STAR_INDEX/NOPE"
 
+# Rename .txt.gz files to .fastq.gz in INPUT_FOLDER
+for f in "$INPUT_FOLDER"/*.txt.gz; do
+    [[ -e "$f" ]] || continue  # skip if no matches
+    new_name="${f%.txt.gz}.fastq.gz"
+    echo "Renaming: $f -> $new_name"
+    mv -- "$f" "$new_name"
+done
+
 if [ "$SKIP_QC" != "true" ]; then
     # Load modules
     module purge
     ml seqtk/1.3-GCC-11.2.0
 
     # Process each file in the input folder
-    for file in "$INPUT_FOLDER"/*.{fastq,txt}.gz; do
+    for file in "$INPUT_FOLDER"/*.fastq.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
         seqtk seq -q20 -Q20 -L50 -n N "$file" | gzip > "$QC_FILTERED/$filename"
@@ -99,7 +107,7 @@ if [ "$SKIP_UMI_EXTRACTION" != "true" ]; then
     
     
     # Extract UMIs
-    for file in "$QC_FILTERED"/*.{fastq,txt}.gz; do
+    for file in "$QC_FILTERED"/*.fastq.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
         umi_tools extract --stdin "$file" --stdout "$UMI_EXTRACTED/$filename" --extract-method=regex --bc-pattern="$REGEX_PATTERN"
@@ -136,7 +144,7 @@ if [ "$SKIP_MAPPING" != "true" ]; then
     # Load STAR module
     module purge
     ml STAR/2.7.11b-GCC-13.2.0
-    for file in "$UMI_EXTRACTED"/*.{fastq,txt}.gz; do
+    for file in "$UMI_EXTRACTED"/*.fastq.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
         STAR --runThreadN "$NUM_THREADS" --genomeDir "$STAR_INDEX/NOPE" --readFilesCommand zcat \
