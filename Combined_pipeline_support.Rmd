@@ -49,7 +49,7 @@ get_file_path <- function(folder_path, file_name){
   return(full_path)
 }
 
-genome_output_folder <- make_clean_dir(output_folder, "/ref/NOPE/")
+genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 grouped_output_folder <- make_clean_dir(output_folder, "/grouped/")
 rds_output_folder <- make_clean_dir(output_folder, "/rds/")
 ```
