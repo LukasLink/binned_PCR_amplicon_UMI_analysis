@@ -28,7 +28,7 @@ conflicts_prefer(dplyr::slice)
 first_time      <- TRUE
 
 # Directories
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030"
+output_folder   <- "/g/steinmetz/xie/CRISPRscreen-Output-2025.08.08updated"
 john_folder     <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 
@@ -58,6 +58,8 @@ same_controls_in_all_sublibraries <- TRUE
 
 # Remove rows without any data 
 drop_0s <- FALSE  # bolean removes all guides with no UMIs/reads
+strict_mode <- TRUE # bolean, removes all guides which don't have UMIs for all bins. 
+min_guides_per_gene <- 3 # Minimum number of guides required to detect a gene.
 
 #===============================================================================
 # Define command-line options
@@ -145,6 +147,8 @@ cat("same_controls_in_all_sublibraries: ", same_controls_in_all_sublibraries, "\
 cat("extra_suffix:                      ", extra_suffix, "\n")
 cat("simplified_rf_threshold:           ", simplified_rf_threshold, "\n")
 cat("upper_lower_percentage:            ", upper_lower_percentage, "\n")
+cat("strict_mode:                       ", strict_mode, "\n")
+cat("min_guides_per_gene:               ", min_guides_per_gene, "\n")
 cat("drop_0s:                           ", drop_0s, "\n")
 
 
@@ -153,22 +157,35 @@ cat("drop_0s:                           ", drop_0s, "\n")
 #===============================================================================
 
 if (recover_input) {
-  recover_input_suffix <- "_RI"
+  recover_input_suffix <- "RI"
 } else {
   recover_input_suffix <- ""
 }
 
 if (drop_0s) {
-  drop_0s_suffix <- "_D0"
+  drop_0s_suffix <- "D0"
 } else {
   drop_0s_suffix <- ""
 }
-
+if (strict_mode) {
+  strict_mode_suffix <- "strict"
+} else {
+  strict_mode_suffix <- ""
+}
 #===============================================================================
 # Construct the file suffix
 #===============================================================================
 
-file_suffix <- paste0("_", pipeline, "_", data_type, "_", method, "_", norm_method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix, ".rds")
+file_suffix <- paste0("_", pipeline,
+                      "_", data_type,
+                      "_", method,
+                      "_", norm_method,
+                      "_", recover_input_suffix,
+                      "_", drop_0s_suffix,
+                      "_", strict_mode_suffix,
+                      "_", min_guides_per_gene,
+                      "_", extra_suffix,
+                      ".rds")
 file_suffix <- sub("___","_",file_suffix)
 file_suffix <- sub("__","_",file_suffix)
 file_suffix <- sub("_\\.","\\.",file_suffix)
@@ -201,7 +218,7 @@ get_file_path <- function(folder_path, file_name){
   return(full_path)
 }
 
-genome_output_folder <- make_clean_dir(output_folder, "/ref/NOPE/")
+genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
 mapped_output_folder <- make_clean_dir(output_folder, "/mapped/")
 rds_output_folder <- make_clean_dir(output_folder, "/rds/")
@@ -675,6 +692,7 @@ normalize_count_df_long <- function(count_df_long, norm_method = "control_median
         cat("Groups with norm_factor == 0:\n")
         print(norm_fac)# shows condition | sublib | sample | norm_factor
         cat("Adding global pseudocount (+1).\n")
+        pseudocount_added <<- TRUE
         
         count_df_long_plus_one <- count_df_long %>% mutate(count = count + 1)
         norm_fac <- count_df_long_plus_one %>%
@@ -703,6 +721,7 @@ normalize_count_df_long <- function(count_df_long, norm_method = "control_median
 }
 
 process_john_data_backup <- process_john_data
+pseudocount_added <- FALSE
 
 if (pipeline == "john"){
   count_df_long <- process_john_data(john_folder,
@@ -1390,7 +1409,13 @@ count_df_long_to_wide <- function(count_df_long,
     print(paste("NA's in Input:", sum(is.na(maude_counts_df$input))))
     print(paste("NA's in Upper:", sum(is.na(maude_counts_df$upper))))
     print(paste("NA's in Lower:", sum(is.na(maude_counts_df$lower))))
-  }  
+  }
+  # MAUDE seems to not like floats, so we round to integers
+  # TO DO: check how I can make maude use floats.
+  maude_counts_df <- maude_counts_df %>% 
+    mutate(input = round(input),
+           lower = round(lower),
+           upper = round(upper))
   return(maude_counts_df)
 }
 
@@ -1455,6 +1480,15 @@ if (method == "sum"){
     )
 }
 
+if (strict_mode){
+  if (pseudocount_added){
+    umi_threshold <- 2
+  } else {
+    umi_threshold <- 1
+  } 
+  maude_counts_df %>%
+    filter(if_any(c(input, upper, lower), ~ . < umi_threshold))
+}
 ```
 
 ## Exploration of the read/umi counts in MAUDE format
@@ -1802,6 +1836,11 @@ if (first_time == TRUE){
     negativeControl = 'isNontargeting',
     elementIDs = 'entrez'
   )
+  
+  # Filter out all genes with not enough guides pointing to them
+  maude_gene_stats <- maude_gene_stats %>%
+    filter(numGuides >= min_guides_per_gene)
+  
   saveRDS(maude_gene_stats,paste0(rds_output_folder,"MAUDE_gene_stats", file_suffix))
 } else {
   maude_gene_stats <- readRDS(paste0(rds_output_folder,"MAUDE_gene_stats", file_suffix))
