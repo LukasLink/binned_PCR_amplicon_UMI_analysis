@@ -4,7 +4,7 @@ author: "Lukas"
 date: "2025-03-18"
 output: html_document
 ---
-
+# Set User options here
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 options(bitmapType="cairo")
@@ -15,6 +15,8 @@ library(MAUDE)
 library(ggplot2)
 library(optparse)
 library(ggrepel)
+library(writexl)
+library(metap) 
 
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
@@ -28,17 +30,43 @@ conflicts_prefer(dplyr::slice)
 first_time      <- TRUE
 
 # Directories
-output_folder   <- "/g/steinmetz/xie/CRISPRscreen-Output-2025.08.08updated"
+output_folder   <- "/g/steinmetz/link/Liangfu_iBeer/cor_combined/"
 john_folder     <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 
 # If any files are to be skipped list their names here
-skip_list       <-  c("L_L4_3","U_L4_3") 
+
+skip_list <- c(
+  "I_L1_20802",
+  "I_L1_20811", "I_L1_20813", "I_L1_20704", "I_L1_30802", "I_L1_30811",
+  "I_L1_30813", "I_L1_30704", 
+  "I_L3_20802", "I_L3_20811", "I_L3_20813", "I_L3_20704",
+  "I_L3_30802", "I_L3_30811", "I_L3_30813", "I_L3_30704", "I_L5_10802",
+  "I_L5_20802", "I_L5_20811",
+  "I_L5_20813", "I_L5_20704", "I_L5_30802", "I_L5_30811", "I_L5_30813",
+  "I_L5_30704", "I_L6_20811",
+  "I_L6_20813", "I_L6_20704", "I_L6_30811", "I_L6_30813", "I_L6_30704",
+  "L_L1_120813", "L_L1_120704", "L_L1_20813",
+  "L_L1_20704", "L_L1_30813", "L_L1_30704", "L_L3_120811",
+  "L_L3_120813", "L_L3_120704", "L_L3_20813", "L_L3_20704",
+  "L_L3_30813", "L_L3_30704", "L_L5_120813", "L_L5_120704",
+  "L_L5_20813", "L_L5_20704", "L_L5_30813", "L_L5_30704",
+  "L_L6_120813", "L_L6_120704", "L_L6_20813",
+  "L_L6_20704", "L_L6_30813", "L_L6_30704", "U_L1_120813",
+  "U_L1_120704", "U_L1_20813", "U_L1_20704", "U_L1_30813",
+  "U_L1_30704",  "U_L3_120813", "U_L3_120704",
+  "U_L3_20813", "U_L3_20704", "U_L3_30813", "U_L3_30704",
+  "U_L5_120813", "U_L5_120704", "U_L5_20813",
+  "U_L5_20704", "U_L5_30813", "U_L5_30704","U_L6_120813",
+  "U_L6_120704", "U_L6_20813", "U_L6_20704", "U_L6_30813",
+  "U_L6_30704", "I_L3_10802", "U_L3_10802","U_L3_10811",
+  "I_L1_10811","I_L1_10802","I_L6_10811","I_L5_10811","I_L3_10811"
+)
 
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
 data_type           <- "umis"   # can be "reads" or "umis"
-method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+method              <- "rep_sublib"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
@@ -59,7 +87,8 @@ same_controls_in_all_sublibraries <- TRUE
 # Remove rows without any data 
 drop_0s <- FALSE  # bolean removes all guides with no UMIs/reads
 strict_mode <- TRUE # bolean, removes all guides which don't have UMIs for all bins. 
-min_guides_per_gene <- 3 # Minimum number of guides required to detect a gene.
+min_guides_per_gene <- 2 # Minimum number of guides required to detect a gene, per replicate not total
+auto_combine_replicates <- TRUE # automatically combines replicas
 
 #===============================================================================
 # Define command-line options
@@ -172,27 +201,46 @@ if (strict_mode) {
 } else {
   strict_mode_suffix <- ""
 }
+if (auto_combine_replicates){
+  auto_combine_replicates_suffix <- "acr"
+} else {
+  auto_combine_replicates <- ""
+}
 #===============================================================================
 # Construct the file suffix
 #===============================================================================
+fs_parts <- c(pipeline,
+           data_type,
+           method,
+           norm_method,
+           recover_input_suffix,
+           drop_0s_suffix,
+           strict_mode_suffix,
+           min_guides_per_gene,
+           auto_combine_replicates_suffix,
+           extra_suffix)
 
-file_suffix <- paste0("_", pipeline,
-                      "_", data_type,
-                      "_", method,
-                      "_", norm_method,
-                      "_", recover_input_suffix,
-                      "_", drop_0s_suffix,
-                      "_", strict_mode_suffix,
-                      "_", min_guides_per_gene,
-                      "_", extra_suffix,
-                      ".rds")
-file_suffix <- sub("___","_",file_suffix)
-file_suffix <- sub("__","_",file_suffix)
-file_suffix <- sub("_\\.","\\.",file_suffix)
-file_info_suffix <- paste0(pipeline, "_", data_type, "_", method, "_", norm_method, recover_input_suffix, drop_0s_suffix,"_", extra_suffix)
-file_info_suffix <- sub("___","_",file_info_suffix)
-file_info_suffix <- sub("__","_",file_info_suffix)
-file_info_suffix <- sub("_$", "", file_info_suffix)
+# keep only non-empty parts
+fs_parts <- fs_parts[fs_parts != ""]
+
+file_suffix <- paste0("_", paste(fs_parts, collapse = "_"), ".rds")
+
+fi_parts <- c(pipeline,
+              data_type,
+              method,
+              norm_method,
+              recover_input_suffix,
+              drop_0s_suffix,
+              strict_mode_suffix,
+              min_guides_per_gene,
+              auto_combine_replicates_suffix,
+              extra_suffix)
+
+# keep only non-empty parts
+fi_parts <- fi_parts[fi_parts != ""]
+
+file_info_suffix <- paste(fi_parts, collapse = "_")
+
 # Print the final file suffix
 cat("File Suffix: ", file_suffix, "\n")
 
@@ -229,8 +277,8 @@ merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
 
 ```
 
-The following codeblock exists to do some basic familiarization with MAUDE,
-and to troubleshoot it if things fail. 
+# The following codeblock exists to do some basic familiarization with MAUDE,
+and to troubleshoot it if things fail. You can ignore it.  
 ```{r make_example_df, eval=FALSE}
 if (FALSE){
   getAnywhere(findGuideHitsAllScreens)
@@ -286,6 +334,7 @@ maude_example_guide_stats <- findGuideHitsAllScreens(
 ```
 
 ## Generate the long format read/umi counts either from my pipline or from johns
+Also provides information for each file about coverage and correct alignment
 
 ```{r get_count_df_long, eval=TRUE}
 
@@ -768,7 +817,7 @@ if (pipeline == "john"){
 ```
 
 ## Some exploration options for the raw reads/umi counts
-
+Mostly for comparing this pipeline to johns bcwithqc, ignore this. 
 ```{r basic_pipeline_comparision, eval=FALSE}
 compare_john_lukas <- function(data_type,
                                john_function = process_john_data,
@@ -953,7 +1002,7 @@ ggplot(count_ranked, aes(x = rank, y = count, color = condition)) +
 ```
 
 ## More detailed data exploration based on the long format read/umi counts 
-
+Run this to check the plots
 ```{r data_exploration_violin, eval=FALSE}
 plot_violin_by_sublib_sample <- function(count_df_long, norm_method = NULL) {
   df <- count_df_long
@@ -1486,8 +1535,11 @@ if (strict_mode){
   } else {
     umi_threshold <- 1
   } 
-  maude_counts_df %>%
-    filter(if_any(c(input, upper, lower), ~ . < umi_threshold))
+  cat("Strict Mode enabled\n")
+  cat("Rows before strict mode: \t", nrow(maude_counts_df),"\n")
+  maude_counts_df <- maude_counts_df %>%
+    filter(if_any(c(input, upper, lower), ~ . <= umi_threshold))
+  cat("Rows after strict mode: \t", nrow(maude_counts_df),"\n")
 }
 ```
 
@@ -1778,7 +1830,7 @@ plot_maude_qc(maude_counts_df)
 plot_maude_qc(maude_counts_df, add_0s = TRUE)
 ```
 
-### Run MAUDE and generate maude_guide_hits and maude_gene_hits
+## Run MAUDE and generate maude_guide_hits and maude_gene_hits
 
 ```{r run_MAUDE, eval=TRUE}
 
@@ -1851,6 +1903,7 @@ maude_gene_stats <- readRDS(paste0(rds_output_folder,"MAUDE_gene_stats", file_su
 
 
 ```
+## Functions that add more information to the results, like the gene symbol
 
 ```{r check_MAUDE_results, eval=TRUE}
 add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
@@ -1913,6 +1966,9 @@ check_UMI_counts <- function(guide_df, reference_df) {
   return(result_df)
 }
 ```
+
+## Create QQplots for the p-values. 
+Lots of debris from old runs in here. Use with caution
 
 ```{r QQplot, eval=FALSE}
 plot_qq_maude <- function(maude_gene_stats, data_name, mark_gene = "AHSA1") {
@@ -2191,37 +2247,18 @@ generate_qq_plots("john_rf_umis")
 #===============================================================================
 # Create Hit lists
 #===============================================================================
+# use my_Hits <- add_info_wrapper("my_file_suffix")
 Hits_current_settings <- add_info_wrapper(file_info_suffix)
-Hits_lukas_umis <- add_info_wrapper("lukas_umis")
-Hits_lukas_umis_RI <- add_info_wrapper("lukas_umis_RI")
-Hits_lukas_umis_sum_RI <- add_info_wrapper("lukas_umis_sum_RI")
-Hits_lukas_umis_rep_RI <- add_info_wrapper("lukas_umis_rep_RI")
-Hits_lukas_umis_control_median_RI <- add_info_wrapper("lukas_umis_control_median_RI")
-Hits_lukas_umis_sum_control_median_RI <- add_info_wrapper("lukas_umis_sum_control_median_RI")
-Hits_lukas_reads <- add_info_wrapper("lukas_reads")
-Hits_lukas_reads_RI <- add_info_wrapper("lukas_reads_RI")
-Hits_lukas_reads_rep_RI <- add_info_wrapper("lukas_reads_rep_RI")
-Hits_lukas_reads_sum_RI <- add_info_wrapper("lukas_reads_sum_RI")
-Hits_lukas_reads_control_median_RI <- add_info_wrapper("lukas_reads_control_median_RI")
-Hits_lukas_reads_sum_control_median_RI <- add_info_wrapper("lukas_reads_sum_control_median_RI")
-Hits_lukas_reads_RI_rf <- add_info_wrapper("lukas_reads_RIrf")
-Hits_lukas_reads_sum_RI_rf <- add_info_wrapper("lukas_reads_sum_RIrf")
-Hits_lukas_reads_rep_RI_rf <- add_info_wrapper("lukas_reads_rep_RIrf")
-Hits_john_umis <- add_info_wrapper("john_umis")
-Hits_john_rf_umis <- add_info_wrapper("john_rf_umis")
-Hits_john_rf_umis_RI <- add_info_wrapper("john_rf_umis_RI")
-Hits_john_rf_umis_sum_RI <- add_info_wrapper("john_rf_umis_sum_RI")
-Hits_john_rf_umis_rep_RI <- add_info_wrapper("john_rf_umis_rep_RI")
-Hits_john_reads <- add_info_wrapper("john_reads")
-Hits_john_reads_RI <- add_info_wrapper("john_reads_RI")
-# Hits_john_reads_RI_rf <- add_info_wrapper("john_reads_RI_rf")
-Hits_john_reads_sum_RI_rf <- add_info_wrapper("john_reads_sum_RI_rf")
-Hits_john_reads_rep_RI_rf <- add_info_wrapper("john_reads_rep_RI_rf")
+Hits_sublib <- add_info_wrapper("lukas_umis_rep_sublib_control_median_RI")
+Hits_default <- add_info_wrapper("lukas_umis_control_median_RI")
+Hits_sublib_combined <- add_info_wrapper("lukas_umis_rep_sublib_control_median_RI_0")
 #===============================================================================
 # Intersect 2 different Hit lists
 #===============================================================================
-top_1000_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=1000)
-top_100_umis_intersect <- get_top_N_intersect(Hits_lukas_umis,Hits_john_umis, N=100)
+top_1000_umis_intersect <- get_top_N_intersect(Hits_default,Hits_sublib_combined, N=1000)
+top_100_umis_intersect <- get_top_N_intersect(Hits_default,Hits_sublib_combined, N=100)
+top_100 <- get_top_N_intersect(top_100_umis_intersect,Hits_sublib, N=100)
+
 top_50_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=50)
 top_20_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=20)
 top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_lukas_reads_sum_RI,Hits_lukas_reads_rep_RI_rf, N=50)
@@ -2348,6 +2385,7 @@ results_methods <- compare_methods(N = 50)
 
 ```
 
+## Generate Waterfall plots for the data
 ```{r Waterfall_plot, eval=FALSE}
 Hits_current_settings <- add_info_wrapper(file_info_suffix)
 
@@ -2466,14 +2504,59 @@ plot_significance_by_rank(Hits_current_settings,
 plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
 
 ```
+# Combine replicas if auto_combine_repicates is set to TRUE
+
+``` {r auto_combine_replicates, eval=TRUE}
+if (auto_combine_replicates){
+  # if we have replicates, handle them now
+  if (length(unique(maude_gene_stats$exp)) > 1){
+    genes_with_rep <- add_info_wrapper(file_info_suffix)
+  
+    export_df <- genes_with_rep %>%
+      group_by(symbol, entrez) %>%
+      summarise(
+        numGuides = sum(numGuides, na.rm = TRUE),
+        seq       = first(seq),
+        sgRNA     = first(sgRNA),
+        meanZ     = mean(meanZ, na.rm = TRUE),
+  
+        # Stouffer’s method (equal weights); use count of non-NA Zs in the denominator
+        stoufferZ = sum(significanceZ, na.rm = TRUE) /
+                    sqrt(sum(!is.na(significanceZ))),
+        # For clarity: final significance Z = stoufferZ
+        significanceZ = stoufferZ,
+        
+        .groups = "drop"
+      ) %>%
+      mutate(
+        # two-sided p from Stouffer Z
+        p.value = 2 * pnorm(abs(stoufferZ), lower.tail = FALSE),
+        FDR     = p.adjust(p.value, method = "BH")
+      )
+    export_df <- export_df %>%
+      select(symbol, entrez, numGuides, stoufferZ, meanZ, significanceZ, p.value, FDR, seq, sgRNA)
+  } else {
+    print("No replicates present, skipping replicate combination")
+    export_df <- add_info_wrapper(file_info_suffix)
+  }
+} else {
+  export_df <- add_info_wrapper(file_info_suffix)
+}
+```
+
+# Export the Data as CSV and excel file
 
 ``` {r basic_export, eval=TRUE}
-export_df <- add_info_wrapper(file_info_suffix)
+
 # Write to Excel
 csv_file_path <- sub(".rds",".csv",paste0(output_folder, "MAUDE_Hits", file_suffix))
 write_csv(export_df, csv_file_path)
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0(output_folder, "MAUDE_Hits", file_suffix))
+write_xlsx(export_df, excel_file_path)
 ```
 
 ``` {r test, eval=FALSE}
-
+imported_df <- read.csv("/g/steinmetz/link/Liangfu_iBeer/cor_combined/MAUDE_Hits_lukas_umis_rep_sublib_control_median_RI.csv", stringsAsFactors = FALSE, fileEncoding = "UTF-8")
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0("/g/steinmetz/link/Liangfu_iBeer/cor_combined/", "top_100.rds"))
+write_xlsx(top_100, excel_file_path)
 ```
