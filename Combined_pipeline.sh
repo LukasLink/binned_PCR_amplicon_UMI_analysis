@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J Nico_PCR_combined_pipline_scratch     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Combined_pipeline_NOPE_only_scratch.sh
-#SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Combined_pipeline_NOPE_only_scratch.sh
+#SBATCH -J Dual_rep_quart_rush     # Job Name                # chmod +x /g/steinmetz/battisti/Data_analyses/ampliconseq/Combined_pipeline.sh
+#SBATCH -A lsteinme             # profile of the group                # sbatch /g/steinmetz/battisti/Data_analyses/ampliconseq/Combined_pipeline.sh
 #SBATCH --mem 128g               # Total memory required for the job
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 12                   # Number of CPUs
-#SBATCH -t 24:00:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 24:05:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/link/logs/log_nico_pcr_combined_pipeline_scratch.out
-#SBATCH -e /g/steinmetz/link/logs/log_nico_pcr_combined_pipeline_scratch.err
+#SBATCH -o /g/steinmetz/battisti/Data_analyses/ampliconseq/log_Dual_rep_quart_rush.out
+#SBATCH -e /g/steinmetz/battisti/Data_analyses/ampliconseq/log_Dual_rep_quart_rush.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -16,29 +16,32 @@
 ################################################################################
 
 # Input and output folder paths
-INPUT_FOLDER="/scratch/link/RAW/NB_EXP030"
-OUTPUT_FOLDER="/scratch/link/NB_EXP030"
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Dual_rep_quart_rush"
+OUTPUT_FOLDER="/g/steinmetz/battisti/Data_analyses/ampliconseq/Dual_rep_quart_rush"
 # Regex pattern for extracting UMIs
-REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
+# REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
+# Regex pattern for extracting Reads
+REGEX_PATTERN="^(?P<discard_1>.{0,4})(?P<umi_1>.{1})(?P<discard_2>TCTTGTGGAAAGGACGAAACACCG){e<=1}"
 # UMI-tools needs the UMIs to be removed from the reads and added to the Readname,
 # it does this by capturing the UMIs as "umi_1", "umi_2"" etc. and throws away 
 # everything captured by "discard_1", "discard_2", etc. 
 
 # STAR settings
-SJDB_OVERHANG=71 #This is the lenght read -1
-Genome_SA_index_N_Bases=14 #Calculated by Combined_pipline_support.rmd
+SJDB_OVERHANG=121 #This is the lenght read -1
+Genome_SA_index_N_Bases=10 #Calculated by Combined_pipline_support.rmd
 NUM_THREADS=10 # The number of Threads used by star, should NOT be higher than n set above. 
 MAX_MEM=100000000000 # The number of bytes available to STAR, should NOT be higher than mem set above
 
 # Skip Options
 # Decide if we want to skip read filtering or not (if yes will exclude UMIs below a certain number of reads)
-SKIP_QC=true
-SKIP_UMI_EXTRACTION=true
-SKIP_GENOME_GENERATE=true
-SKIP_MAPPING=true
+READS=true #if processing Reads, set all except Grouping, Filtering, deduplication to false
+SKIP_QC=false
+SKIP_UMI_EXTRACTION=false
+SKIP_GENOME_GENERATE=false
+SKIP_MAPPING=false
 SKIP_GROUPING=true
-SKIP_FILTERING=false
-SKIP_DEDUPLICATION=false
+SKIP_FILTERING=true
+SKIP_DEDUPLICATION=true
 SKIP_IDXSTATS=false
 ################################################################################
 # END OF USER OPTIONS
@@ -88,12 +91,12 @@ if [ "$SKIP_QC" != "true" ]; then
     # Load modules
     module purge
     ml seqtk/1.3-GCC-11.2.0
-
+    
     # Process each file in the input folder
     for file in "$INPUT_FOLDER"/*.fastq.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
-        seqtk seq -q20 -Q20 -L50 -n N "$file" | gzip > "$QC_FILTERED/$filename"
+        seqtk seq -q20 -Q20 -L100 -n N "$file" | gzip > "$QC_FILTERED/$filename"
     done
     echo "Finished QC"
 else
@@ -237,12 +240,18 @@ else
 fi
 
 if [ "$SKIP_IDXSTATS" != "true" ]; then
+
+  if [ "$READS" == "true" ]; then
+    INDEX_SOURCE_DIR="$MAPPED"
+  else
+    INDEX_SOURCE_DIR="$DEDUP"
+  fi
   # Index deduplicated BAM files
   module purge
   ml SAMtools/1.21-GCC-13.3.0
-  for file in "$DEDUP"/*.bam; do
+  for file in "$INDEX_SOURCE_DIR"/*.bam; do
     filename=$(basename "$file" .bam)
-    samtools idxstats "$file" > "$DEDUP/${filename}_idxstats.txt"
+    samtools idxstats "$file" > "$INDEX_SOURCE_DIR/${filename}_idxstats.txt"
   done
   echo "Finished IDXSTATS"
 else

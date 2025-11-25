@@ -21,12 +21,13 @@ library(ShortRead)
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::count)
+conflicts_prefer(dplyr::select)
 
 # User Options
 ###############
 
-output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/test"
-first_time <- FALSE
+output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush"
+first_time <- TRUE
 # End of User Options
 ###############
 
@@ -51,13 +52,14 @@ get_file_path <- function(folder_path, file_name){
 
 genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 grouped_output_folder <- make_clean_dir(output_folder, "/grouped/")
+mapped_output_folder <- make_clean_dir(output_folder, "/mapped/")
 rds_output_folder <- make_clean_dir(output_folder, "/rds/")
 ```
 
 ## Checking sequences to prepare for reference building
 Change the raw_path to the path where your fastq file is located, and then then run the read_raw block to have a look at your reads. This will also tell you the most common read length, which will be used for calculating SJDB_OVERHANG.
 ```{r read_raw, eval=FALSE}
-raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/QC_filtered/I_L1_1.fastq.gz"
+raw_path = "/g/steinmetz/battisti/Data_analyses/ampliconseq/Dual_rep_quart_rush/UMI_extracted/I_L1_1.fastq.gz"
 
 fastq_reader <- FastqStreamer(raw_path, n = 1000000)
 fastq_data <- yield(fastq_reader)
@@ -65,7 +67,7 @@ close(fastq_reader)
 
 # Extract sequences
 sequences <- sread(fastq_data)
-for (i in seq(50, 100, by = 5)) {
+for (i in seq(1800, 1850, by = 5)) {
   print(sequences[i:(i+4)])
 }
 freq_matrix <- consensusMatrix(sequences, as.prob = TRUE)
@@ -90,7 +92,7 @@ print("-----------------------------------")
 ## Loading
 If you are using the HD whole genome sgRNA library, in the load_tables block, simply specify which sub-libraries (if any) you wish to exclude in remove_these_sublibraries, and then run the block. 
 ```{r load_tables}
-remove_these_sublibraries = c("ICS_5","ICS_6") #Set sublibraries to be removed
+remove_these_sublibraries = c("ICS_3","ICS_4","ICS_5","ICS_6") #Set sublibraries to be removed
 
 
 if (first_time == TRUE){
@@ -133,7 +135,7 @@ Generate the reference.fasta file, which will be used by STAR.
 
 ```{r make_reference_fasta, eval=FALSE}
 #add cassette 
-NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAA"))
+NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACC"))
 
 build_ref_df = function(df) {
   ref_df <- df %>%
@@ -376,6 +378,211 @@ if (FALSE){
 }
 
 
+```
+
+```{r reads_Knee_plot, eval=FALSE}
+read_file_to_df <- function(file_name,
+                            folder_path = dedup_output_folder,
+                            suffix_to_rm = "_dedup_idxstats.txt",
+                            threshold_df = NULL,
+                            check_alignments = TRUE
+                            ){
+  
+  file_path <- paste0(folder_path,file_name)  
+  df <- read.table(file_path, header=FALSE, sep="\t", stringsAsFactors=FALSE)
+  name <- sub(suffix_to_rm,"",file_name)
+  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_\\d+")[, 2]
+  sub_lib <- paste0("ICS_",sub_lib)
+  exp <- str_replace(name, "^([^_]+_)", "")
+
+  df <- df %>% 
+    rename(sgRNA = V1, count = V3, length = V2) %>%
+    select(-V4) %>%
+    mutate(exp = exp) %>%
+    filter(sgRNA != "*")
+  
+  check_df <- merged_sgRNA_df %>% select(sgrna_id, sublib)
+  df <- df %>%
+    left_join(check_df, by = c("sgRNA" = "sgrna_id"))
+  
+  if (check_alignments == TRUE) {
+    cat("Checking wrong allignments for: ", name,"\n")
+    # Filter non-control rows with count > 0
+    non_control_df <- df %>%
+      filter(!grepl("^CONTROL_", sgRNA), count > 0)
+
+    # Count sum stats
+    correct_sum <- non_control_df %>% filter(sublib == sub_lib) %>% summarise(total = sum(count)) %>% pull(total)
+    wrong_sum <- non_control_df %>% filter(sublib != sub_lib) %>% summarise(total = sum(count)) %>% pull(total)
+    total_sum <- correct_sum + wrong_sum
+    
+    cat("UMI/read count allignment Stats:\n")
+    cat(sprintf("  Correct (aligned to sgRNA in sublibary):     %d (%.2f%%)\n", 
+                correct_sum, 100 * correct_sum / total_sum))
+    cat(sprintf("  Wrong   (aligned to sgRNA not in sublibary): %d (%.2f%%)\n\n", 
+                wrong_sum, 100 * wrong_sum / total_sum))
+  }
+  
+  same_controls_in_all_sublibraries <- get("same_controls_in_all_sublibraries", envir = .GlobalEnv)
+  if (same_controls_in_all_sublibraries == TRUE){
+    df <- df %>%
+      filter(sublib == sub_lib | grepl("^CONTROL_", sgRNA)) %>%
+      select(-sublib)
+  } else {
+    df <- df %>%
+      filter(sublib == sub_lib) %>%
+      select(-sublib)
+  }
+  
+  if (check_alignments == TRUE) {
+    cat(sprintf("sgRNA coverage: %.2f%%\n", sum(df$count > 0) / nrow(df) * 100))
+    cat("--------------------------------------------\n")
+  }
+    
+  df <- df %>%
+    mutate(group_category = case_when(
+      # grepl("^CONTROL_C_EGFP_", sgRNA) ~ "EGFP_control",
+      grepl("^CONTROL_C_NONTARG_", sgRNA) ~ "non_targeting_control",
+      grepl("^CONTROL_C_", sgRNA) ~ "targeting_control",
+      TRUE ~ "targeting"
+    ))
+  return(df)
+}
+
+process_folder_files <- function(folder_path,
+                                 threshold_df = NULL,
+                                 skip_list = c("L_L4_3","U_L4_3"),
+                                 check_alignments = TRUE){
+  
+  data_type <- get("data_type", envir = .GlobalEnv)
+
+  # List all matching files in the folder
+  if (data_type == "umis") {
+    files <- list.files(
+      folder_path,
+      pattern = "^[ILU]_L\\d+_\\d+_dedup_idxstats\\.txt$",
+      full.names = TRUE
+    )
+  
+  } else if (data_type == "reads") {
+    files <- list.files(
+      folder_path,
+      pattern = "^[ILU]_L\\d+_\\d+_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$",
+      full.names = TRUE
+    )
+  
+  } else {
+    stop("Invalid data_type. data_type must be 'reads' or 'umis'")
+  }
+
+  
+  
+  # Read each file and combine them
+  combined_df <- bind_rows(lapply(files, function(file) {
+    # Extract the filename
+    file_name <- basename(file)
+    if (data_type == "umis"){
+      name <- sub("_dedup_idxstats.txt","",file_name)
+      # Extract condition (X), sublib (L#), and sample (#) using regex
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_dedup_idxstats\\.txt$")
+      suffix_to_remove <- "_dedup_idxstats.txt"
+    }
+    if (data_type == "reads"){
+      name <- sub("_Aligned.sortedByCoord.out_idxstats","",file_name)
+      # Extract condition (X), sublib (L#), and sample (#) using regex
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
+      suffix_to_remove <- "_Aligned.sortedByCoord.out_idxstats.txt"
+    }
+    
+    # Skip entries from skip list
+    if (name %in% skip_list){return(NULL)}
+    
+    if (is.na(matches[1])) {
+      stop(paste("Filename does not match expected pattern:", file_name))
+    }
+    
+    condition <- case_when(
+      matches[2] == "I" ~ "input",
+      matches[2] == "L" ~ "lower",
+      matches[2] == "U" ~ "upper"
+    )
+    
+    sublib <- paste0("sublib_", matches[3])
+    sample <- paste0("sample_", matches[4])
+    
+    # Read the file using your existing function
+    df <- read_file_to_df(file_name = file_name,
+                          folder_path = folder_path,
+                          threshold_df = threshold_df,
+                          check_alignments = check_alignments,
+                          suffix_to_rm = suffix_to_remove)
+    
+    # Add the new columns
+    df <- df %>%
+      mutate(condition = condition, sublib = sublib, sample = sample) %>% 
+      select(-length)
+    
+    return(df)
+  }))
+  
+  return(combined_df)
+}
+read_count_df <- process_folder_files(mapped_output_folder,
+                                      skip_list = c())
+
+read_count_ranked <- read_count_df %>%
+  group_by(condition, sublib, sample) %>%
+  arrange(desc(count), .by_group = TRUE) %>%  # highest count gets rank 1
+  mutate(rank = row_number()) %>%
+  ungroup() %>% 
+  filter(count > 0)
+
+combos <- read_count_ranked %>%
+  distinct(condition, sublib, sample)
+
+# 2) ggplot: log-log line plot, faceted by condition/sublib/sample
+ggplot(read_count_ranked, aes(x = rank, y = count)) +
+  geom_line() +
+  scale_x_log10() +
+  scale_y_log10() +
+  facet_wrap(~ condition + sublib + sample, scales = "free_y") +
+  theme_bw()
+
+plots_list <- list()
+for (i in seq_len(nrow(combos))) {
+  cond_i  <- combos$condition[i]
+  sub_i   <- combos$sublib[i]
+  samp_i  <- combos$sample[i]
+  
+  df_i <- read_count_ranked %>%
+    filter(condition == cond_i,
+           sublib    == sub_i,
+           sample    == samp_i)
+  
+  p <- ggplot(df_i, aes(x = rank, y = count)) +
+    geom_line() +
+    scale_x_log10() +
+    scale_y_log10() +
+    labs(
+      title = paste("condition:", cond_i,
+                    "| sublib:", sub_i,
+                    "| sample:", samp_i),
+      x = "Rank",
+      y = "Count"
+    )
+  
+  print(p)  # shows each plot in sequence in your plotting device
+  
+  # (optional) store in list
+  plots_list[[paste(cond_i, sub_i, samp_i, sep = "_")]] <- p
+  
+  # (optional) save to file
+  # ggsave(
+  #   filename = paste0("loglog_rank_", cond_i, "_", sub_i, "_", samp_i, ".png"),
+  #   plot = p,
+  #   width = 6, height = 4
+  # )
+}
 ```
 ## Generate Threshold.tsv
 ```{r generate_thresholds.tsv, eval=FALSE}
