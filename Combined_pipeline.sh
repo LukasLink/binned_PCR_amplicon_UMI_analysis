@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J Dual_rep_quart_rush     # Job Name                # chmod +x /g/steinmetz/battisti/Data_analyses/ampliconseq/Combined_pipeline.sh
-#SBATCH -A lsteinme             # profile of the group                # sbatch /g/steinmetz/battisti/Data_analyses/ampliconseq/Combined_pipeline.sh
+#SBATCH -J Combined_pipeline_split     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
+#SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
 #SBATCH --mem 128g               # Total memory required for the job
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 12                   # Number of CPUs
-#SBATCH -t 24:05:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 05:00:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/battisti/Data_analyses/ampliconseq/log_Dual_rep_quart_rush.out
-#SBATCH -e /g/steinmetz/battisti/Data_analyses/ampliconseq/log_Dual_rep_quart_rush.err
+#SBATCH -o /g/steinmetz/link/logs/log_Combined_pipeline_split.out
+#SBATCH -e /g/steinmetz/link/logs//log_Combined_pipeline_split.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -16,8 +16,8 @@
 ################################################################################
 
 # Input and output folder paths
-INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Dual_rep_quart_rush"
-OUTPUT_FOLDER="/g/steinmetz/battisti/Data_analyses/ampliconseq/Dual_rep_quart_rush"
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/fake_untreated"
+OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/fake_untreated/"
 # Regex pattern for extracting UMIs
 # REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
 # Regex pattern for extracting Reads
@@ -28,14 +28,14 @@ REGEX_PATTERN="^(?P<discard_1>.{0,4})(?P<umi_1>.{1})(?P<discard_2>TCTTGTGGAAAGGA
 
 # STAR settings
 SJDB_OVERHANG=121 #This is the lenght read -1
-Genome_SA_index_N_Bases=10 #Calculated by Combined_pipline_support.rmd
+Genome_SA_index_N_Bases=9 #Calculated by Combined_pipline_support.rmd
 NUM_THREADS=10 # The number of Threads used by star, should NOT be higher than n set above. 
 MAX_MEM=100000000000 # The number of bytes available to STAR, should NOT be higher than mem set above
 
 # Skip Options
 # Decide if we want to skip read filtering or not (if yes will exclude UMIs below a certain number of reads)
 READS=true #if processing Reads, set all except Grouping, Filtering, deduplication to false
-SKIP_QC=false
+SKIP_QC=true
 SKIP_UMI_EXTRACTION=false
 SKIP_GENOME_GENERATE=false
 SKIP_MAPPING=false

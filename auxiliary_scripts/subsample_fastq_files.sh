@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J subsample_fastq_files     # Job Name                # chmod +x /g/steinmetz/battisti/Data_analyses/ampliconseq/subsample_fastq_files.sh
-#SBATCH -A lsteinme             # profile of the group                # sbatch /g/steinmetz/battisti/Data_analyses/ampliconseq/subsample_fastq_files.sh
-#SBATCH --mem 128g               # Total memory required for the job
+#SBATCH -J subsample_fastq_files     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
+#SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
+#SBATCH --mem 36g               # Total memory required for the job
 #SBATCH -N 1                    # Number of nodes
-#SBATCH -n 12                   # Number of CPUs
-#SBATCH -t 24:05:00             # Runtime until the job is forcefully canceled
+#SBATCH -n 1                   # Number of CPUs
+#SBATCH -t 02:00:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/battisti/Data_analyses/ampliconseq/log_subsample_fastq_files.out
-#SBATCH -e /g/steinmetz/battisti/Data_analyses/ampliconseq/log_subsample_fastq_files.err
+#SBATCH -o /g/steinmetz/link/logs/log_subsample_fastq_files.out
+#SBATCH -e /g/steinmetz/link/logs//log_subsample_fastq_files.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -15,13 +15,15 @@
 # USER OPTIONS - Adjust these as needed
 ################################################################################
 # Input and output folder paths
-INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Dual_rep_quart_rush"
-OUTPUT_FOLDER="/g/steinmetz/battisti/Data_analyses/ampliconseq/Dual_rep_quart_rush"
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush"
+OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/"
 percentages=("75" "50" "25")
 
 ################################################################################
 # END OF USER OPTIONS
 ################################################################################
+
+ml seqtk
 
 # Extract the input directory name from the path
 INPUT_DIR_NAME=$(basename "$INPUT_FOLDER")
@@ -35,6 +37,10 @@ mkdir -p "$NEW_DIR"  # Create the directory, -p ensures no error if it already e
 
 # Loop through the percentages and create subdirectories
 for percent in "${percentages[@]}"; do
+    # Ensure percent is treated as a number
+    percent=$((percent))  # This forces the string to be treated as a number
+    percent_decimal=$(echo "$percent / 100" | bc -l)
+    
     SUBDIR="$NEW_DIR/subsample_${percent}"
     mkdir -p "$SUBDIR"  # Create the subdirectory for the percentage
 
@@ -46,7 +52,7 @@ for percent in "${percentages[@]}"; do
     # Copy files from the rds directory (excluding files with "MAUDE" in the name) to each subdirectory
     if [ -d "$INPUT_FOLDER/rds" ]; then
         # Find files in rds that don't contain "MAUDE" in the name and copy them to the subdirectory
-        find "$INPUT_FOLDER/rds" -type f ! -name "*MAUDE*" -exec cp {} "$SUBDIR/" \;
+        find "$INPUT_FOLDER/rds" -type f ! -name "*MAUDE*" -exec cp {} "$SUBDIR/rds" \;
     fi
     # Create QC_filtered_subsampled directory
     QC_DIR="$SUBDIR/QC_filtered_subsampled"
@@ -58,21 +64,13 @@ for percent in "${percentages[@]}"; do
         for file in "$INPUT_FOLDER/QC_filtered"/*; do
             # Check for .fastq.gz files and subsample them
             if [[ "$file" == *.fastq.gz ]]; then
-                # Calculate the number of reads to subsample
-                TOTAL_READS=$(zcat "$file" | wc -l)
-                READS_TO_SAMPLE=$((TOTAL_READS * percent / 100))
 
                 # Use seqtk to randomly subsample the file and save it in the subsampled directory
-                seqtk sample "$file" "$READS_TO_SAMPLE" | gzip > "$QC_DIR/$(basename "$file")"
-
+                seqtk sample -s"444" "$file" "$percent_decimal" | gzip > "$QC_DIR/$(basename "$file")"
+                echo "Percent: $percent, Decimal: $percent_decimal"
             # Check for .txt.gz files and subsample them
-            elif [[ "$file" == *.txt.gz ]]; then
-                # Calculate the number of lines to subsample
-                TOTAL_LINES=$(zcat "$file" | wc -l)
-                LINES_TO_SAMPLE=$((TOTAL_LINES * percent / 100))
-
-                # Use shuf to randomly subsample the lines and save it in the subsampled directory
-                zcat "$file" | shuf -n "$LINES_TO_SAMPLE" | gzip > "$QC_DIR/$(basename "$file")"
+            else
+                echo "$file is not a .fastq.gz file and will not be subsampled"
             fi
         done
     fi
