@@ -1,0 +1,2409 @@
+---
+title: "comparing_results"
+author: "Lukas"
+date: "2025-12-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(bitmapType="cairo")
+library(tidyverse)
+library(Matrix)
+library(conflicted)
+library(MAUDE)
+library(ggplot2)
+library(optparse)
+library(ggrepel)
+library(writexl)
+library(metap) 
+library(readxl)
+library(VennDiagram)
+library(grid)   
+
+
+conflicts_prefer(dplyr::rename)
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::slice)
+conflicts_prefer(base::setdiff)
+conflicts_prefer(base::intersect)
+#===============================================================================
+# User Options (can be overrided via CLI)
+#===============================================================================
+# first_time will save all intermediary results, if FALSE will try to load them
+first_time      <- FALSE
+
+# Directories
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush/"
+john_folder     <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
+john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
+
+# If any files are to be skipped list their names here
+
+skip_list <- c()
+
+# Extra target list
+# If any of the controls should be considered targeting (example EGFP and AAVS1)
+include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
+
+# Set Options for pipline function
+pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
+data_type           <- "reads"   # can be "reads" or "umis"
+method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+norm_method         <- "control_median"       # can be "control_median" or ""
+recover_input       <- TRUE     # bolean estimates missing input data
+subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
+
+# Set Fractions for the upper and lower bins
+upper_lower_percentage <- 0.10  # Fraction of the lower&upper bin 0.10 = 10%
+                                # The Rest is used and removed by MAUDE for normalization.
+
+# Custom suffix and optional simplified read filtering
+extra_suffix  <- ""   # custom sufix, special behaviour when set to "rf"
+                      # if extra_suffix is set to "rf" it applies simplified read filtering,  
+                      # which removes all reads below simplified_rf_threshold
+simplified_rf_threshold <- 1000 # threshold for simplified filtering
+
+# Are all the non-targeting control sgRNAS the same in all sublibraries/replicates?
+same_controls_in_all_sublibraries <- TRUE
+
+# Remove rows without any data 
+drop_0s <- FALSE  # bolean removes all guides with no UMIs/reads
+strict_mode <- FALSE # bolean, removes all guides which don't have UMIs for all bins. 
+min_guides_per_gene <- 0 # Minimum number of guides required to detect a gene, per replicate not total
+auto_combine_replicates <- FALSE # automatically combines replicas
+
+#===============================================================================
+# Define command-line options
+#===============================================================================
+option_list <- list(
+  make_option(c("--first_time"), type = "logical", default = first_time,
+              help = "First run flag, will save files (default: TRUE)", metavar = "LOGICAL"),
+  make_option(c("--output_folder"), type = "character", default = output_folder,
+              help = "Output folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030')", 
+              metavar = "PATH"),
+  make_option(c("--john_folder"), type = "character", default = john_folder,
+              help = "John folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/')", 
+              metavar = "PATH"),
+  make_option(c("--john_rf_folder"), type = "character", default = john_rf_folder,
+              help = "John RF folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt')", 
+              metavar = "PATH"),
+  make_option(c("--skip_list"), type = "character", default = paste(skip_list, collapse = ","),
+              help = "If any files are to be skipped list their names here (comma-separated) (default: 'L_L4_3,U_L4_3')", 
+              metavar = "LIST"),
+  make_option(c("--pipeline"), type = "character", default = pipeline, 
+              help = "Pipeline name (default: 'lukas')", metavar = "CHARACTER"),
+  make_option(c("--data_type"), type = "character", default = data_type, 
+              help = "Data type (default: 'umis')", metavar = "CHARACTER"),
+  make_option(c("--method"), type = "character", default = method, 
+              help = "Method (default: '')", metavar = "CHARACTER"),
+  make_option(c("--norm_method"), type = "character", default = norm_method, 
+              help = "Normalization method (default: '')", metavar = "CHARACTER"),
+  make_option(c("--recover_input"), type = "logical", default = recover_input, 
+              help = "Recover missing input (default: TRUE)", metavar = "LOGICAL"),
+  make_option(c("--subsample_controls"), type = "logical", default = subsample_controls, 
+              help = "Subsample control guides so some appear in the results (default: TRUE)", metavar = "LOGICAL"),
+  make_option(c("--same_controls_in_all_sublibraries"), type = "logical", default = same_controls_in_all_sublibraries, 
+              help = "Set to FALSE if the individual sublibraries/replicates have different control sgRNAs (default: TRUE)", metavar = "LOGICAL"),
+  make_option(c("--extra_suffix"), type = "character", default = extra_suffix, 
+              help = "Suffix for additional options (default: '')", metavar = "CHARACTER"),
+  make_option(c("--simplified_rf_threshold"), type = "integer", default = simplified_rf_threshold,
+              help = "Threshold for simplified filtering (default: 1000)", metavar = "INTEGER"),
+  make_option(c("--upper_lower_percentage"), type = "double", default = upper_lower_percentage,
+              help = "Fraction of the lower&upper bin (default: 0.10)", metavar = "DOUBLE"),
+  make_option(c("--drop_0s"), type = "logical", default = drop_0s, 
+              help = "Drop rows where input, upper, and lower are all 0 (default: TRUE)", metavar = "LOGICAL")
+)
+
+#===============================================================================
+# Parse the command-line arguments
+#===============================================================================
+opt_parser <- OptionParser(option_list = option_list)
+opt <- parse_args(opt_parser)
+
+#===============================================================================
+# Override the defaults with CLI values
+#===============================================================================
+first_time                        <- opt$first_time
+output_folder                     <- opt$output_folder
+john_folder                       <- opt$john_folder
+john_rf_folder                    <- opt$john_rf_folder
+skip_list                         <- strsplit(opt$skip_list, ",")[[1]]
+pipeline                          <- opt$pipeline
+data_type                         <- opt$data_type
+method                            <- opt$method
+norm_method                       <- opt$norm_method
+recover_input                     <- opt$recover_input
+subsample_controls                <- opt$subsample_controls
+same_controls_in_all_sublibraries <- opt$same_controls_in_all_sublibraries
+extra_suffix                      <- opt$extra_suffix
+simplified_rf_threshold           <- opt$simplified_rf_threshold
+upper_lower_percentage            <- opt$upper_lower_percentage
+drop_0s                           <- opt$drop_0s
+
+#===============================================================================
+# Print the options (for verification)
+#===============================================================================
+cat("first_time:                        ", first_time, "\n")
+cat("output_folder:                     ", output_folder, "\n")
+cat("john_folder:                       ", john_folder, "\n")
+cat("john_rf_folder:                    ", john_rf_folder, "\n")
+cat("skip_list:                         ", paste(skip_list, collapse = ", "), "\n")
+cat("pipeline:                          ", pipeline, "\n")
+cat("data_type:                         ", data_type, "\n")
+cat("method:                            ", method, "\n")
+cat("norm_method:                       ", norm_method, "\n")
+cat("recover_input:                     ", recover_input, "\n")
+cat("subsample_controls:                ", subsample_controls, "\n")
+cat("same_controls_in_all_sublibraries: ", same_controls_in_all_sublibraries, "\n")
+cat("extra_suffix:                      ", extra_suffix, "\n")
+cat("simplified_rf_threshold:           ", simplified_rf_threshold, "\n")
+cat("upper_lower_percentage:            ", upper_lower_percentage, "\n")
+cat("strict_mode:                       ", strict_mode, "\n")
+cat("min_guides_per_gene:               ", min_guides_per_gene, "\n")
+cat("drop_0s:                           ", drop_0s, "\n")
+
+
+#===============================================================================
+# Condition for adding "RI" and "D0"
+#===============================================================================
+
+if (recover_input) {
+  recover_input_suffix <- "RI"
+} else {
+  recover_input_suffix <- ""
+}
+
+if (drop_0s) {
+  drop_0s_suffix <- "D0"
+} else {
+  drop_0s_suffix <- ""
+}
+if (strict_mode) {
+  strict_mode_suffix <- "strict"
+} else {
+  strict_mode_suffix <- ""
+}
+if (auto_combine_replicates){
+  auto_combine_replicates_suffix <- "acr"
+} else {
+  auto_combine_replicates_suffix <- ""
+}
+if (min_guides_per_gene > 0){
+  min_guides_per_gene_suffix <- min_guides_per_gene
+} else {
+  min_guides_per_gene_suffix <- ""
+}
+#===============================================================================
+# Construct the file suffix
+#===============================================================================
+fs_parts <- c(pipeline,
+           data_type,
+           method,
+           norm_method,
+           recover_input_suffix,
+           drop_0s_suffix,
+           strict_mode_suffix,
+           min_guides_per_gene_suffix,
+           auto_combine_replicates_suffix,
+           extra_suffix)
+
+# keep only non-empty parts
+fs_parts <- fs_parts[fs_parts != ""]
+
+file_suffix <- paste0("_", paste(fs_parts, collapse = "_"), ".rds")
+
+fi_parts <- c(pipeline,
+              data_type,
+              method,
+              norm_method,
+              recover_input_suffix,
+              drop_0s_suffix,
+              strict_mode_suffix,
+              min_guides_per_gene_suffix,
+              auto_combine_replicates_suffix,
+              extra_suffix)
+
+# keep only non-empty parts
+fi_parts <- fi_parts[fi_parts != ""]
+
+file_info_suffix <- paste(fi_parts, collapse = "_")
+
+# Print the final file suffix
+cat("File Suffix: ", file_suffix, "\n")
+
+#===============================================================================
+# Construct File Paths
+#===============================================================================
+make_clean_dir <- function(base_path, sub_path) {
+  
+  full_path <- paste0(base_path, "/", sub_path)
+  
+  full_path <- gsub("///", "/", full_path, fixed = TRUE)
+  full_path <- gsub("//", "/", full_path, fixed = TRUE)
+  
+  if (!dir.exists(full_path)) {
+    dir.create(full_path, recursive = TRUE)
+  }
+  return(full_path)
+}
+get_file_path <- function(folder_path, file_name){
+  full_path <- paste0(folder_path, "/",file_name)
+  full_path <- gsub("///", "/", full_path, fixed = TRUE)
+  full_path <- gsub("//", "/", full_path, fixed = TRUE)
+  return(full_path)
+}
+
+genome_output_folder <- make_clean_dir(output_folder, "/ref/")
+dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
+mapped_output_folder <- make_clean_dir(output_folder, "/mapped/")
+rds_output_folder <- make_clean_dir(output_folder, "/rds/")
+
+
+merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
+                                         "merged_sgRNA_df.rds"))
+```
+
+# The following codeblock exists to do some basic familiarization with MAUDE,
+and to troubleshoot it if things fail. You can ignore it.  
+```{r make_example_df, eval=FALSE}
+if (FALSE){
+  getAnywhere(findGuideHitsAllScreens)
+  getAnywhere(getElementwiseStats)
+  getAnywhere(findGuideHits)
+  getAnywhere(getZScalesWithNTGuides())
+  getAnywhere(optim())
+}
+
+
+# Create the data for maude
+maude_example_df_1 <- data.frame(sgRNA = c(LETTERS[1:6], "CONTROL_C_NONTARG_G", "CONTROL_C_NONTARG_H", "CONTROL_C_I", "CONTROL_C_J"),
+                               input = c(4.1, 3, 5, 3, 8, 7, 5, 6, 7, 5),
+                               upper = c(1, 9, 5, 0, 4, 2, 0, 1, 3, 2),
+                               lower = c(4, 4, 1, 1, 3, 1, 0, 2, 2, 1),
+                               sublib = "sublib_1")
+maude_example_df_2 <- maude_example_df_1 %>%
+  mutate(input = input + 1,
+         upper = upper + 1,
+         lower = lower + 1,
+         exp = 'rep1',
+         isNontargeting = case_when(str_detect(sgRNA, "^CONTROL_C_NONTARG_") ~ FALSE, # Anything else → FALSE
+                                    str_detect(sgRNA, "^CONTROL_C_") ~ TRUE, # CONTROL_C_X → TRUE
+                                    TRUE ~ FALSE # Anything else → FALSE) %>%
+                                    )
+  )
+
+# Define bin stats with 10% for lower/upper each
+lower_bin_end = 0.1
+upper_bin_start = 1 - 0.1
+
+maude_example_bins <- tibble(
+  Bin = rep(c("upper", "lower"), length(unique(maude_example_df_2[["exp"]]))),  # Repeat 'upper' and 'lower' for each exp
+  exp = rep(unique(maude_example_df_2[["exp"]]), each = 2),  # Repeat each exp value twice
+  binStartQ = ifelse(rep(c("upper", "lower"), length(unique(maude_example_df_2[["exp"]]))) == "lower", 0.001, upper_bin_start),
+  binEndQ = ifelse(rep(c("upper", "lower"), length(unique(maude_example_df_2[["exp"]]))) == "lower", lower_bin_end, 0.999),
+  fraction = binEndQ - binStartQ,
+  binStartZ = qnorm(binStartQ),
+  binEndZ = qnorm(binEndQ)
+) %>%
+  select(Bin, binStartQ, binEndQ, fraction, binStartZ, binEndZ, exp) %>%
+  as.data.frame()
+
+
+maude_example_guide_stats <- findGuideHitsAllScreens(
+  experiments = unique(maude_example_df_2['exp']),
+  countDataFrame = maude_example_df_2,
+  binStats = maude_example_bins,
+  sortBins = c('lower', 'upper'),
+  unsortedBin = 'input',
+  negativeControl = 'isNontargeting'
+)
+```
+
+```{r get_count_df_long, eval=TRUE}
+
+read_file_to_df <- function(file_name,
+                            folder_path = dedup_output_folder,
+                            suffix_to_rm = "_dedup_idxstats.txt",
+                            threshold_df = NULL,
+                            check_alignments = TRUE
+                            ){
+  
+  file_path <- paste0(folder_path,file_name)  
+  df <- read.table(file_path, header=FALSE, sep="\t", stringsAsFactors=FALSE)
+  name <- sub(suffix_to_rm,"",file_name)
+  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_\\d+")[, 2]
+  sub_lib <- paste0("ICS_",sub_lib)
+  exp <- str_replace(name, "^([^_]+_)", "")
+  if(is.null(threshold_df)){
+    threshold <- 0
+  } else {
+    threshold <- threshold_df$threshold[threshold_df$replicate == name]
+  }
+  
+  df <- df %>% 
+    rename(sgRNA = V1, count = V3, length = V2) %>%
+    select(-V4) %>%
+    mutate(count = if_else(count <= threshold, 0, count),
+           exp = exp) %>%
+    filter(sgRNA != "*")
+  
+  check_df <- merged_sgRNA_df %>% select(sgrna_id, sublib)
+  df <- df %>%
+    left_join(check_df, by = c("sgRNA" = "sgrna_id"))
+  
+  if (check_alignments == TRUE) {
+    cat("Checking wrong allignments for: ", name,"\n")
+    # Filter non-control rows with count > 0
+    non_control_df <- df %>%
+      filter(!grepl("^CONTROL_", sgRNA), count > 0)
+
+    # Count sum stats
+    correct_sum <- non_control_df %>% filter(sublib == sub_lib) %>% summarise(total = sum(count)) %>% pull(total)
+    wrong_sum <- non_control_df %>% filter(sublib != sub_lib) %>% summarise(total = sum(count)) %>% pull(total)
+    total_sum <- correct_sum + wrong_sum
+    
+    cat("UMI/read count allignment Stats:\n")
+    cat(sprintf("  Correct (aligned to sgRNA in sublibary):     %d (%.2f%%)\n", 
+                correct_sum, 100 * correct_sum / total_sum))
+    cat(sprintf("  Wrong   (aligned to sgRNA not in sublibary): %d (%.2f%%)\n\n", 
+                wrong_sum, 100 * wrong_sum / total_sum))
+  }
+  
+  same_controls_in_all_sublibraries <- get("same_controls_in_all_sublibraries", envir = .GlobalEnv)
+  if (same_controls_in_all_sublibraries == TRUE){
+    df <- df %>%
+      filter(sublib == sub_lib | grepl("^CONTROL_", sgRNA)) %>%
+      select(-sublib)
+  } else {
+    df <- df %>%
+      filter(sublib == sub_lib) %>%
+      select(-sublib)
+  }
+  
+  if (check_alignments == TRUE) {
+    cat(sprintf("sgRNA coverage: %.2f%%\n", sum(df$count > 0) / nrow(df) * 100))
+    cat("--------------------------------------------\n")
+  }
+    
+  df <- df %>%
+    mutate(group_category = case_when(
+      # grepl("^CONTROL_C_EGFP_", sgRNA) ~ "EGFP_control",
+      grepl("^CONTROL_C_NONTARG_", sgRNA) ~ "non_targeting_control",
+      grepl("^CONTROL_C_", sgRNA) ~ "targeting_control",
+      TRUE ~ "targeting"
+    ))
+  return(df)
+}
+
+process_folder_files <- function(folder_path,
+                                 threshold_df = NULL,
+                                 skip_list = c("L_L4_3","U_L4_3"),
+                                 check_alignments = TRUE){
+  
+  data_type <- get("data_type", envir = .GlobalEnv)
+
+  # List all matching files in the folder
+  if (data_type == "umis") {
+    files <- list.files(
+      folder_path,
+      pattern = "^[ILU]_L\\d+_\\d+_dedup_idxstats\\.txt$",
+      full.names = TRUE
+    )
+  
+  } else if (data_type == "reads") {
+    files <- list.files(
+      folder_path,
+      pattern = "^[ILU]_L\\d+_\\d+_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$",
+      full.names = TRUE
+    )
+  
+  } else {
+    stop("Invalid data_type. data_type must be 'reads' or 'umis'")
+  }
+
+  
+  
+  # Read each file and combine them
+  combined_df <- bind_rows(lapply(files, function(file) {
+    # Extract the filename
+    file_name <- basename(file)
+    if (data_type == "umis"){
+      name <- sub("_dedup_idxstats.txt","",file_name)
+      # Extract condition (X), sublib (L#), and sample (#) using regex
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_dedup_idxstats\\.txt$")
+      suffix_to_remove <- "_dedup_idxstats.txt"
+    }
+    if (data_type == "reads"){
+      name <- sub("_Aligned.sortedByCoord.out_idxstats","",file_name)
+      # Extract condition (X), sublib (L#), and sample (#) using regex
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
+      suffix_to_remove <- "_Aligned.sortedByCoord.out_idxstats.txt"
+    }
+    
+    # Skip entries from skip list
+    if (name %in% skip_list){return(NULL)}
+    
+    if (is.na(matches[1])) {
+      stop(paste("Filename does not match expected pattern:", file_name))
+    }
+    
+    condition <- case_when(
+      matches[2] == "I" ~ "input",
+      matches[2] == "L" ~ "lower",
+      matches[2] == "U" ~ "upper"
+    )
+    
+    sublib <- paste0("sublib_", matches[3])
+    sample <- paste0("sample_", matches[4])
+    
+    # Read the file using your existing function
+    df <- read_file_to_df(file_name = file_name,
+                          folder_path = folder_path,
+                          threshold_df = threshold_df,
+                          check_alignments = check_alignments,
+                          suffix_to_rm = suffix_to_remove)
+    
+    # Add the new columns
+    df <- df %>%
+      mutate(condition = condition, sublib = sublib, sample = sample) %>% 
+      select(-length)
+    
+    return(df)
+  }))
+  
+  return(combined_df)
+}
+read_john_data <- function(dir_path, sgRNA_df) {
+  # Step 1: Read barcodes.tsv.gz and get seq values
+  
+  barcodes_path <- file.path(dir_path, "barcodes.tsv.gz")
+  barcode_seqs <- read_tsv(barcodes_path, col_names = FALSE, show_col_types = FALSE) %>%
+    pull(1) %>%
+    basename()
+
+  # Step 2: Read matrix.mtx.gz (only diagonal values matter)
+  matrix_path <- file.path(dir_path, "matrix.mtx.gz")
+  mat <- readMM(matrix_path)
+
+  if (!is(mat, "dgTMatrix")) {
+    mat <- as(mat, "dgTMatrix")
+  }
+
+  # Extract diagonal (should match barcodes length)
+  diag_values <- Matrix::diag(mat)
+
+  # Step 3: Construct dataframe with seq and count
+  count_df <- tibble(
+    seq = barcode_seqs,
+    count = diag_values
+  )
+
+  # Step 4: Join with sgRNA_df by seq
+  joined_df <- sgRNA_df %>%
+    select(seq, sgrna_id) %>% 
+    inner_join(count_df, by = "seq") %>% 
+    select(sgrna_id,count) %>% 
+    mutate(count = as.integer(count))
+
+  return(joined_df)
+}
+read_john_rf_data  <- function(file_path, sgRNA_df){
+  count_df <- read.table(file_path, sep = "\t", header = FALSE, col.names = c("seq", "count"))
+ 
+  joined_df <- sgRNA_df %>%
+    select(seq, sgrna_id) %>% 
+    inner_join(count_df, by = "seq") %>% 
+    select(sgrna_id,count) %>% 
+    mutate(count = as.integer(count))
+  
+  return(joined_df)
+}
+
+# Helper function for process_john_rf_data and process_john_data
+complete_sgrna_df <- function(df,
+                              merged_sgRNA_df,
+                              sublib,
+                              name = NULL,
+                              check_alignments = TRUE) {
+
+  expected_ids <- merged_sgRNA_df %>%
+    filter(sublib == !!sublib | grepl("^CONTROL_", sgrna_id)) %>%
+    pull(sgrna_id)
+  
+  missing_ids <- base::setdiff(expected_ids, df$sgrna_id)
+  
+  new_rows <- tibble(sgrna_id = missing_ids, count = 0)
+  
+  complete_df <- bind_rows(df, new_rows)
+  
+  if (check_alignments == TRUE) {
+    if (is.null(name)) {name <- sublib}
+
+    # Join with merged_sgRNA_df to get sublib info
+    annotated_df <- complete_df %>%
+      left_join(merged_sgRNA_df %>% select(sgrna_id, sublib), by = "sgrna_id") %>%
+      filter(!grepl("^CONTROL_", sgrna_id), count > 0)
+    
+    correct_sum <- annotated_df %>% filter(sublib == !!sublib) %>% summarise(total = sum(count)) %>% pull(total)
+    wrong_sum   <- annotated_df %>% filter(sublib != !!sublib) %>% summarise(total = sum(count)) %>% pull(total)
+    total_sum   <- correct_sum + wrong_sum
+
+    cat("Checking wrong alignments for: ", name, "\n")
+    cat("UMI/read count alignment Stats:\n")
+    cat(sprintf("  Correct (aligned to sgRNA in sublibrary):     %d (%.2f%%)\n", 
+                correct_sum, 100 * correct_sum / total_sum))
+    cat(sprintf("  Wrong   (aligned to sgRNA not in sublibrary): %d (%.2f%%)\n\n", 
+                wrong_sum, 100 * wrong_sum / total_sum))
+    cat("--------------------------------------------\n")
+  }
+
+
+  return(complete_df)
+}
+
+process_john_rf_data <- function(parent_dir,
+                                 merged_sgRNA_df = merged_sgRNA_df,
+                                 data_type = "umis",
+                                 skip_list = c("L_L4_3","U_L4_3"),
+                                 suffix_to_rm = "_results.tsv",
+                                 check_alignments = TRUE) {
+  
+  # Initialize list to collect data
+  results <- list()
+  file_paths <- list.files(path = parent_dir, pattern = "_results\\.tsv$", full.names = TRUE)
+  merged_sgRNA_df$sublib <- gsub("ICS", "sublib", merged_sgRNA_df$sublib)
+  for (file in file_paths){
+    file_name <- basename(file)
+    name <- sub(suffix_to_rm,"",file_name)
+    # Skip entries from skip list
+    if (name %in% skip_list){next}
+    # Extract condition (X), sublib (L#), and sample (#) using regex
+    pattern <- paste0("^([ILU])_L(\\d+)_(\\d+)", suffix_to_rm)
+    matches <- str_match(file_name, pattern)
+    
+    if (is.na(matches[1])) {
+      stop(paste("Filename does not match expected pattern:", file_name))
+    }
+    
+    condition <- case_when(
+      matches[2] == "I" ~ "input",
+      matches[2] == "L" ~ "lower",
+      matches[2] == "U" ~ "upper"
+    )
+    
+    sublib <- paste0("sublib_", matches[3])
+    sample <- paste0("sample_", matches[4])
+    exp <- paste0("L", matches[3], "_", matches[4])
+    
+    # Safely read data
+    df <- tryCatch({
+      df <- read_john_rf_data(file, merged_sgRNA_df)
+      df <- complete_sgrna_df(df,
+                              merged_sgRNA_df,
+                              sublib,
+                              name = name,
+                              check_alignments = check_alignments)
+      
+      df %>%
+        mutate(
+          condition = condition,
+          sublib = sublib,
+          sample = sample,
+          exp = exp
+        )
+    }, error = function(e) {
+      cat("Skipping due to error in", file_name, "->", e$message, "\n")
+      return(NULL)
+    })
+    
+    if (!is.null(df)) {
+    # Rename and add group_category
+    df <- df %>%
+      rename(sgRNA = sgrna_id) %>%
+      mutate(group_category = case_when(
+        grepl("^CONTROL_C_NONTARG_", sgRNA) ~ "non_targeting_control",
+        grepl("^CONTROL_C_", sgRNA) ~ "targeting_control",
+        TRUE ~ "targeting"
+      ))
+
+    results[[length(results) + 1]] <- df
+    }
+  }
+
+  # Combine all data frames
+  final_df <- bind_rows(results)
+
+  return(final_df)
+}
+
+process_john_data <- function(parent_dir,
+                              merged_sgRNA_df = merged_sgRNA_df,
+                              data_type = "umis",
+                              skip_list = c("L_L4_3","U_L4_3"),
+                              check_alignments = TRUE) {
+  # Get list of matching subdirectories
+  subdirs <- list.dirs(parent_dir, recursive = FALSE, full.names = TRUE)
+  subdirs <- subdirs[grepl("_output_all$", basename(subdirs))]
+  
+  merged_sgRNA_df$sublib <- gsub("ICS", "sublib", merged_sgRNA_df$sublib)
+
+  # Initialize list to collect data
+  results <- list()
+
+  for (dir_path in subdirs) {
+    folder_name <- basename(dir_path)
+    
+    match <- str_match(folder_name, "^([A-Z])([A-Z])([0-9])([0-9])_output_all$")
+
+    if (any(is.na(match))) {
+      warning(paste("Skipping folder with unexpected name:", folder_name))
+      next
+    }
+    name <- paste0(match[2],"_",match[3],match[4],"_",match[5])
+    if (name %in% skip_list){next}
+    
+    condition <- case_when(
+      match[2] == "I" ~ "input",
+      match[2] == "L" ~ "lower",
+      match[2] == "U" ~ "upper",
+      TRUE ~ NA_character_
+    )
+    
+    sublib <- paste0("sublib_", match[4])
+    sample <- paste0("sample_", match[5])
+    exp <- paste0(match[3], match[4], "_", match[5])
+
+
+    # Path to raw_umis_bc_matrix
+    if (data_type == "umis"){
+      matrix_dir <- file.path(dir_path, "raw_umis_bc_matrix")
+    }
+    if (data_type == "reads"){
+      matrix_dir <- file.path(dir_path, "raw_reads_bc_matrix")
+    }
+
+    # Safely read data
+    df <- tryCatch({
+      df <- read_john_data(matrix_dir, merged_sgRNA_df)
+      df <- complete_sgrna_df(df,
+                              merged_sgRNA_df,
+                              sublib,
+                              name = name,
+                              check_alignments = check_alignments)
+      
+      df %>%
+        mutate(
+          condition = condition,
+          sublib = sublib,
+          sample = sample,
+          exp = exp
+        )
+    }, error = function(e) {
+      cat("Skipping due to error in", folder_name, "->", e$message, "\n")
+      return(NULL)
+    })
+
+    if (!is.null(df)) {
+      # Rename and add group_category
+      df <- df %>%
+        rename(sgRNA = sgrna_id) %>%
+        mutate(group_category = case_when(
+          grepl("^CONTROL_C_NONTARG_", sgRNA) ~ "non_targeting_control",
+          grepl("^CONTROL_C_", sgRNA) ~ "targeting_control",
+          TRUE ~ "targeting"
+        ))
+
+      results[[length(results) + 1]] <- df
+    } else {
+      print(paste("WARNING:",matrix_dir,"yielded df -> NULL"))
+    }
+  }
+
+  # Combine all data frames
+  final_df <- bind_rows(results)
+
+  return(final_df)
+}
+normalize_count_df_long <- function(count_df_long, norm_method = "control_median"){
+  allowed_norm_methods <- c("control_median")
+  if (!(norm_method %in% allowed_norm_methods)){
+    cat("ERROR: ", norm_method, "is not an allowed normalization method.\n")
+    cat("Implemented normalization methods: ", allowed_norm_methods,"\n")
+    stop()
+  }
+  
+  if (norm_method == "control_median"){
+  
+    # 1. Determine normalization factors based on control categories
+    norm_fac <- count_df_long %>%
+      filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
+      group_by(condition, sublib, sample) %>%
+      summarise(norm_factor = median(count), .groups = "drop")
+    
+    # 2. Global median across all counts (entire dataset)
+    med_count <- median(count_df_long$count)
+    
+    count_df_long_continue <- count_df_long
+    
+    if (med_count == 0 | any(norm_fac$norm_factor == 0)) {
+      cat("WARNING: at least one normalization factor is 0\n")
+      cat("Median of all counts:", med_count, "\n")
+      
+      zero_nf <- norm_fac %>% 
+        filter(norm_factor == 0)
+      
+      if (!(nrow(zero_nf) == 0)) {
+        cat("Groups with norm_factor == 0:\n")
+        print(norm_fac)# shows condition | sublib | sample | norm_factor
+        cat("Adding global pseudocount (+1).\n")
+        pseudocount_added <<- TRUE
+        
+        count_df_long_plus_one <- count_df_long %>% mutate(count = count + 1)
+        norm_fac <- count_df_long_plus_one %>%
+          filter(group_category %in% c("targeting_control", "non_targeting_control", "kept_control")) %>%
+          group_by(condition, sublib, sample) %>%
+          summarise(norm_factor = median(count), .groups = "drop")
+        
+        # 2. Global median across all counts (entire dataset) #
+        med_count <- median(count_df_long_plus_one$count)
+        
+        count_df_long_continue <- count_df_long_plus_one
+      }
+      
+      cat("--------------------------------------------\n")
+    }
+    
+    # 3. Normalize counts using (count * med_count / norm_factor)
+    return_df <- count_df_long_continue %>%
+      inner_join(norm_fac, by = c("condition", "sublib", "sample")) %>%
+      mutate(norm_count = (count * med_count) / norm_factor) %>% 
+      mutate(count = round(norm_count,2)) %>%
+      select(-c(norm_factor,norm_count))
+  }
+  return_df <- return_df %>% mutate(count = round(count))
+  return(return_df)
+}
+
+process_john_data_backup <- process_john_data
+pseudocount_added <- FALSE
+
+if (pipeline == "john"){
+  count_df_long <- process_john_data(john_folder,
+                                     data_type = data_type,
+                                     merged_sgRNA_df = merged_sgRNA_df,
+                                     skip_list = skip_list)
+  if (extra_suffix == "rf"){
+      count_df_long <- count_df_long %>% 
+      mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
+      }
+} else {
+  if (pipeline == "lukas"){
+    if (data_type == "umis"){
+      count_df_long <- process_folder_files(dedup_output_folder,
+                                            skip_list = skip_list) #Add threshold df if thresholds should be applied 
+    }
+    if (data_type == "reads"){
+      count_df_long <- process_folder_files(mapped_output_folder,
+                                            skip_list = skip_list) #Add threshold df if thresholds should be applied 
+      if (extra_suffix == "rf"){
+        count_df_long <- count_df_long %>% 
+        mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
+      }
+
+    }
+       
+  } else {
+    if (pipeline == "john_rf"){
+      count_df_long <- process_john_rf_data(john_rf_folder,
+                                            data_type = data_type,
+                                            merged_sgRNA_df = merged_sgRNA_df,
+                                            skip_list = skip_list)
+      
+      process_john_data <- process_john_rf_data
+      if (extra_suffix == "rf"){
+        count_df_long <- count_df_long %>% 
+        mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
+      }
+    } else {
+      stop("Unsupported pipeline specified. Exiting. Pipline must be john, john_rf or lukas.")
+    }
+  }  
+}
+if (length(include_controls_list) > 0){
+  for (control_gene in include_controls_list){
+    count_df_long$group_category[grepl(control_gene, count_df_long$sgRNA)] <- "targeting"
+  }
+}
+```
+
+## Some exploration options for the raw reads/umi counts
+Mostly for comparing this pipeline to johns bcwithqc, ignore this. 
+```{r basic_pipeline_comparision, eval=FALSE}
+compare_john_lukas <- function(data_type,
+                               john_function = process_john_data,
+                               addage = "",
+                               john_folder = john_folder,
+                               lukas_umi_folder = dedup_output_folder,
+                               lukas_read_folder = mapped_output_folder){
+
+  if (!(data_type %in% c("umis","reads"))){
+    print('ERROR: data_type must be "umis" or "reads"')
+    return(NULL)
+  }  
+  
+  if (addage != ""){
+    addage <- paste0("(",addage,")")
+  }
+  
+  john_df_long <- john_function(john_folder,sgRNA_df, data_type = data_type, merged_sgRNA_df = merged_sgRNA_df)
+  if (data_type == "umis"){
+    lukas_df_long <- process_folder_files(lukas_umi_folder) #Add threshold df if thresholds should be applied
+    data_name <- "UMI"
+  }
+  if (data_type == "reads"){
+    lukas_df_long <- process_folder_files(lukas_read_folder) #Add threshold df if thresholds should be applied
+    data_name <- "Read"
+  } 
+  
+  # Join the data frames on sgRNA and exp
+  matched_df <- full_join(john_df_long, lukas_df_long, by = c("sgRNA", "condition","sublib","sample","group_category","exp"), suffix = c("_john", "_lukas")) %>%
+    mutate(
+      # Replace missing counts with 0
+      count_john = ifelse(is.na(count_john), 0, count_john),
+      count_lukas = ifelse(is.na(count_lukas), 0, count_lukas),
+      
+      # Fill in missing 'other' columns from available one
+      # Example: if there’s another column like 'condition' or 'replicate'
+      # replicate = coalesce(replicate_john, replicate_lukas)
+      # (Uncomment and adapt as needed!)
+    )
+
+  # Compute the difference in count
+  matched_df <- matched_df %>%
+    mutate(diff = count_john - count_lukas)
+  
+  # Total difference
+  total_diff <- sum(matched_df$diff)
+  
+  # Mean difference
+  mean_diff <- mean(matched_df$diff)
+  
+  # Standard deviation
+  sd_diff <- sd(matched_df$diff)
+  
+  
+  
+  # Print results
+  cat("Total",data_name, addage, "Difference:", total_diff, "\n")
+  cat("Mean",data_name, addage, "Difference:", mean_diff, "\n")
+  cat(data_name, addage, "Standard Deviation:", sd_diff, "\n")
+  
+
+
+  total_df <- tibble(
+    source = c("John", "Lukas"),
+    total_count = c(sum(matched_df$count_john), sum(matched_df$count_lukas))
+  )
+  
+  p <- ggplot(total_df, aes(x = source, y = total_count, fill = source)) +
+    geom_bar(stat = "identity", width = 0.6) +
+    geom_text(aes(label = total_count), vjust = -0.5) +
+    labs(
+      title = paste("Total",data_name, addage,"Counts"),
+      x = "",
+      y = paste("Total",data_name, addage,"Counts")
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  print(p)
+  
+  nonzero_df <- tibble(
+    source = c("John", "Lukas", "Max"),
+    nonzero_count = c(sum(matched_df$count_john > 0), sum(matched_df$count_lukas > 0), nrow(matched_df))
+  )
+  
+  p <- ggplot(nonzero_df, aes(x = source, y = nonzero_count, fill = source)) +
+    geom_bar(stat = "identity", width = 0.6) +
+    geom_text(aes(label = nonzero_count), vjust = -0.5) +
+    labs(
+      title = paste("Coverage of",data_name, addage,"Counts"),
+      x = "",
+      y = paste("Coverage of",data_name, addage,"Counts")
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none")
+  print(p)
+  
+  # Assuming you've matched the two runs: count_john vs count_lukas
+  p <- ggplot(matched_df, aes(x = count_john + 1, y = count_lukas + 1)) +
+    geom_count(alpha = 0.7) +
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+    scale_size_area(max_size = 4) +  # optional: adjust max size
+    scale_x_log10() + scale_y_log10() +
+    labs(
+      title = paste("Comparison of sgRNA", data_name, addage, "Counts"),
+      x = paste("John", data_name, addage, "Counts"),
+      y = paste("Lukas", data_name, addage, "Counts"),
+      size = "Count overlap"
+    ) +
+    theme_minimal()
+  print(p)
+  # Histogram
+  p <- ggplot(matched_df, aes(x = diff)) +
+    geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+    labs(title = paste("Distribution of",data_name, addage, "Count Differences (John - Lukas)"),
+         x = paste(data_name, addage,"Count Difference"),
+         y = "Frequency") +
+    xlim(-1000, 1000) +
+    theme_minimal()
+  print(p)
+  # Compute the 2.5th and 97.5th percentiles (95% interval)
+  x_limits <- quantile(matched_df$diff, probs = c(0.025, 0.975), na.rm = TRUE)
+  
+  # Plot with limited x-axis
+  p <- ggplot(matched_df, aes(x = diff)) +
+    geom_density(fill = "skyblue", alpha = 0.5) +
+    coord_cartesian(xlim = x_limits) +  # Zoom in without removing data
+    labs(title = paste("Density of",data_name, addage, "Count Differences (95% Range)"),
+         x = "John - Lukas") +
+    theme_minimal()
+  print(p)
+  x_limits <- quantile(matched_df$diff, probs = c(0.005, 0.995), na.rm = TRUE)
+  
+  # Plot with limited x-axis
+  p <- ggplot(matched_df, aes(x = diff)) +
+    geom_density(fill = "skyblue", alpha = 0.5) +
+    coord_cartesian(xlim = x_limits) +  # Zoom in without removing data
+    labs(title = paste("Density of",data_name, addage, "Count Differences (99% Range)"),
+         x = "John - Lukas") +
+    theme_minimal()
+  print(p)
+  matched_df <- matched_df %>%
+    mutate(
+      average = (count_john + count_lukas) / 2,
+      diff = count_john - count_lukas
+    )
+  
+  p <- ggplot(matched_df, aes(x = average, y = diff)) +
+    geom_point(alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    labs(title = paste("Bland–Altman Plot for",data_name, addage,"Counts"),
+         x = paste("Average", data_name, addage, "Count"),
+         y = "Difference (John - Lukas)") +
+    theme_minimal()
+  print(p)
+  return(matched_df)
+}
+compare_john_lukas("reads",
+                   john_function = process_john_data_backup)
+compare_john_lukas("umis",
+                   john_function = process_john_rf_data,
+                   john_folder = john_rf_folder)
+compare_john_lukas("umis",
+                   lukas_umi_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/dedup_no_filt/",
+                   john_function = process_john_data_backup,
+                   addage = "#NoFilter")
+
+# Rank each row by count within each exp and condition group
+count_ranked <- count_df_long %>%
+  group_by(exp, condition) %>%
+  arrange(desc(count), .by_group = TRUE) %>%
+  mutate(rank = row_number())
+
+ggplot(count_ranked, aes(x = rank, y = count, color = condition)) +
+  geom_line() +
+  facet_wrap(~exp, scales = "free_y") +  # if you want separate panels per experiment
+  labs(title = "Ranked Counts per exp/condition",
+       x = "Rank",
+       y = "Count") +
+  scale_y_log10() +
+  scale_x_log10() +
+  theme_minimal()
+```
+
+## Functions that add more information to the results, like the gene symbol
+
+```{r check_MAUDE_results, eval=TRUE}
+add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
+
+  maude_guide_stats <- maude_guide_stats %>%
+    left_join(
+      merged_sgRNA_df %>%
+        mutate(entrez = as.character(entrez)) %>% 
+        select(sgrna_id, entrez, seq, symbol) %>%
+        distinct(sgrna_id, .keep_all = TRUE),
+      by = c("sgRNA" = "sgrna_id")
+    ) %>%
+    mutate(entrez = coalesce(as.character(entrez), sgRNA))
+    
+  maude_guide_stats <- maude_guide_stats %>%
+    mutate(abs_meanZ = abs(mean)) %>%
+    group_by(entrez) %>%
+    slice_max(order_by = abs_meanZ, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  
+  maude_gene_stats <- maude_gene_stats %>%
+    left_join(maude_guide_stats %>%
+                select(entrez, seq, sgRNA, symbol), by = "entrez")
+  
+  export_df <- maude_gene_stats %>% 
+    select(c(symbol, entrez, numGuides,stoufferZ,meanZ,significanceZ,p.value, FDR, seq, sgRNA)) %>% 
+    arrange(significanceZ)
+  return(export_df)
+}
+
+add_info_wrapper <- function(suffix,
+                             folder = rds_output_folder,
+                             preffix_gene = "MAUDE_gene_stats",
+                             preffix_guide = "MAUDE_guide_stats"){
+  gene <- readRDS(paste0(folder,preffix_gene,"_",suffix,".rds"))
+  guide <- readRDS(paste0(folder,preffix_guide,"_",suffix,".rds"))
+  result <- add_info_to_gene_stats(guide, gene)
+  
+  return(result)
+}
+check_UMI_counts <- function(guide_df, reference_df) {
+  # Step 1: Merge reference_df's entrez column to guide_df based on matching sgRNA and sgrna_id
+  guide_df <- guide_df %>%
+    left_join(reference_df %>%
+                select(sgrna_id, entrez), 
+              by = c("sgRNA" = "sgrna_id"))
+  
+  # Step 2: Group by unique combinations of sublib and sample
+  result_df <- guide_df %>%
+    group_by(sublib, sample) %>%
+    summarise(
+      input_sum = sum(input, na.rm = TRUE),
+      lower_sum = sum(lower, na.rm = TRUE),
+      upper_sum = sum(upper, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Return the result as a dataframe
+  return(result_df)
+}
+```
+
+## Create QQplots for the p-values. 
+Lots of debris from old runs in here. Use with caution
+
+```{r QQplot_functions, eval=TRUE}
+plot_qq_maude <- function(maude_gene_stats, data_name, mark_gene = "AHSA1") {
+  # Check that required columns exist
+  if (!"p.value" %in% names(maude_gene_stats) || !"symbol" %in% names(maude_gene_stats)) {
+    stop("Input data frame must contain 'p.value' and 'symbol' columns.")
+  }
+  
+  # Sort the observed p-values and keep corresponding symbols
+  sorted_stats <- maude_gene_stats[order(maude_gene_stats$p.value), ]
+  # observed_pvalues <- p.adjust(sorted_stats$p.value, method = "hochberg", n = length(sorted_stats$p.value))
+  observed_pvalues <- sorted_stats$p.value
+  gene_symbols <- sorted_stats$symbol
+  
+  # Expected p-values adjusted to observed max
+  max_p <- max(observed_pvalues)
+  expected_pvalues <- (1:length(observed_pvalues)) / (length(observed_pvalues) + 1) * max_p
+  
+  # Transform to -log10
+  log_observed <- -log10(observed_pvalues)
+  log_expected <- -log10(expected_pvalues)
+  
+  # Identify the point to mark
+  mark_index <- which(gene_symbols == mark_gene)
+  
+  # Plot Q-Q plot
+  plot(log_expected, log_observed,
+       main = paste("p-values Q-Q plot for", data_name),
+       xlab = "Expected -log(p-value)",
+       ylab = "Observed -log(p-value)",
+       pch = 20, col = "blue",
+       xlim = c(0, 5), ylim = c(0, 5))
+  
+  # Reference line
+  abline(0, 1, col = "red", lty = 2)
+  
+  # Highlight the specific gene
+  if (length(mark_index) > 0) {
+    points(log_expected[mark_index], log_observed[mark_index],
+           col = "darkorange", pch = 17, cex = 1.5)
+    text(log_expected[mark_index], log_observed[mark_index],
+         labels = mark_gene, pos = 4, offset = 0.5, col = "darkorange")
+  }
+}
+
+get_top_N <- function(df, N = 1000, lookup_df = merged_sgRNA_df){
+  N_half <- round(N / 2) 
+  df_N <- bind_rows(
+    df %>% arrange(significanceZ) %>% head(N_half),      # lowest Z
+    df %>% arrange(desc(significanceZ)) %>% head(N_half) # highest Z
+  )
+  return(df_N)
+}
+
+get_top_N_intersect <- function(df_1,df_2,N = 1000, lookup_df = merged_sgRNA_df){
+  
+  N_half <- round(N / 2)  
+  
+  # Get top and bottom N/2 from df_1
+  df1_extreme <- bind_rows(
+    df_1 %>% arrange(significanceZ) %>% head(N_half),      # lowest Z
+    df_1 %>% arrange(desc(significanceZ)) %>% head(N_half) # highest Z
+  )
+  
+  # Same for df_2
+  df2_extreme <- bind_rows(
+    df_2 %>% arrange(significanceZ) %>% head(N_half),
+    df_2 %>% arrange(desc(significanceZ)) %>% head(N_half)
+  )
+  # Find common entrez values
+  common_entrez <- base::intersect(df1_extreme$entrez, df2_extreme$entrez)
+  
+  # Filter both for common entrez
+  df1_common <- df1_extreme %>% filter(entrez %in% common_entrez)
+  df2_common <- df2_extreme %>% filter(entrez %in% common_entrez)
+  
+  # Create combined results
+  results_df <- bind_rows(df1_common, df2_common) %>%
+    distinct(entrez, .keep_all = TRUE)  # one row per entrez, from first found in either df
+  
+  # Join with lookup — only first match per entrez
+  lookup_first <- lookup_df %>%
+    group_by(entrez) %>%
+    dplyr::slice(1) %>%  # keep only the first match
+    ungroup() %>%
+    select(entrez, sgrna_id, symbol) %>% 
+    mutate(entrez = as.character(entrez))
+  
+  # Add to results
+  results_df <- results_df %>%
+    left_join(lookup_first, by = "entrez")
+  
+  return(results_df)
+}
+
+compare_versions <- function(base_name, file_path = "/home/link/NB_EXP030/MAUDE_gene_stats") {
+  # Create a vector of suffixes
+  suffixes <- c("", "_RI", "_D0", "_RI_D0")
+  
+  # Read the files based on combinations of base_name and suffixes
+  files <- lapply(suffixes, function(suffix) {
+    file <- paste0(file_path, "_", base_name, suffix, ".rds")
+    readRDS(file)
+  })
+  
+  # Assign meaningful names to each version (e.g., "lukas_reads", "john_reads", etc.)
+  names(files) <- paste0(base_name, suffixes)
+  
+  # Perform the comparisons (you can adjust this logic depending on your requirements)
+  comparisons <- list()
+  for (i in 1:length(files)) {
+    for (j in i:length(files)) {
+      if (i != j) {
+        comparison_name <- paste(names(files)[i], "vs", names(files)[j])
+        comparisons[[comparison_name]] <- get_top_N_intersect(files[[i]], files[[j]])
+      }
+    }
+  }
+  
+  return(comparisons)
+}
+
+
+compare_versions <- function(file_path = get("rds_output_folder", envir = .GlobalEnv),
+                             base_names = c("lukas_reads", "john_reads", "lukas_umis", "john_rf_umis")) {
+
+  # Create an empty list to store all comparisons
+  comparisons <- list()
+
+  # Suffixes to consider
+  suffixes <- c("", "_RI", "_D0", "_RI_D0")
+  
+  AHSA1_position_finder <- function(file, name){
+    # Sort the dataframe by 'significanceZ' in ascending order
+    sorted_df <- file %>%
+      arrange(significanceZ)  # Assuming 'significanceZ' is the column name
+  
+    # Find the row where the 'entrez' value is 10598
+    target_row <- sorted_df %>% filter(entrez == 10598)
+    
+    if (nrow(target_row) > 0) {
+      # Get the position (row number) and significanceZ value
+      position <- which(sorted_df$entrez == 10598)
+      significanceZ_value <- target_row$significanceZ
+      
+      # Print the result
+      cat(paste("AHSA1 position in", name, "is", position, "with significanceZ value of", significanceZ_value, "\n"))
+    } else {
+      cat(paste("AHSA1 (entrez 10598) not found in", name, "\n"))
+    }
+  }
+  
+  name_list <- list()
+  # Comparison 1: Compare all versions of each base name against each other
+  for (base_name in base_names) {
+    # Read files based on the base_name and suffixes
+    files <- lapply(suffixes, function(suffix) {
+      file <- paste0(file_path, "_", base_name, suffix, ".rds")
+      if (file.exists(file)) {
+        name_list <<- c(name_list, paste0(base_name, suffix))  # Use <<- to modify the global name_list
+        return(readRDS(file))
+      } else {
+        cat(paste("File not found, skipping:", file, "\n"))
+        return(NULL)  # Return NULL if file doesn't exist
+      }
+    })
+    
+    # Remove any NULL elements (files that were missing)
+    files <- files[!sapply(files, is.null)]
+    names(files) <- name_list
+
+    # Perform comparisons between all versions of the base name
+    for (i in 1:length(files)) {
+      for (j in i:length(files)) {
+        cat(paste("------------------------------------------------","\n"))
+        if (i != j) {
+          cat(paste("------------------------------------------------","\n"))
+          comparison_name <- paste(names(files)[i], "vs", names(files)[j])
+          intersect_df <- get_top_N_intersect(files[[i]], files[[j]], N = 100)
+          cat(paste(comparison_name, "Number of intersects:",nrow(intersect_df),"\n"))
+          AHSA1_position_finder(files[[i]], names(files)[i])
+          AHSA1_position_finder(files[[j]], names(files)[j])
+          comparisons[[paste(base_name, comparison_name)]] <- intersect_df
+        }
+      }
+    }
+  }
+  
+  # Comparison 2: Compare reads and umis between John and Lukas
+  # Define pairs for Lukas vs. John comparisons for "reads" and "umis"
+  john_lukas_comparisons <- list(
+    c("lukas_reads", "john_reads"),
+    c("lukas_umis", "john_rf_umis")
+  )
+  
+  for (pair in john_lukas_comparisons) {
+    for (suffix in suffixes) {
+      cat(paste("------------------------------------------------","\n"))
+      # Construct filenames for Lukas and John based on base names and suffixes
+      lukas_file <- paste0(file_path, "_", pair[1], suffix, ".rds")
+      john_file <- paste0(file_path, "_", pair[2], suffix, ".rds")
+      
+      # Check if the files exist
+      if (file.exists(lukas_file) & file.exists(john_file)) {
+        # Read the files
+        lukas_data <- readRDS(lukas_file)
+        john_data <- readRDS(john_file)
+        
+        # Perform the comparison between Lukas and John for each suffix combination
+        comparison_name <- paste(pair[1], "vs", pair[2], "(", suffix, ")")
+        intersect_df <- get_top_N_intersect(lukas_data, john_data, N = 100)
+        cat(paste(comparison_name, "Number of intersects:",nrow(intersect_df),"\n"))
+        comparisons[[paste(pair[1], pair[2], comparison_name)]] <- intersect_df
+      } else {
+        cat(paste("One or both files not found, skipping:", lukas_file, "and", john_file, "\n"))
+      }
+    }
+  }
+
+  return(comparisons)
+}
+plot_all_qq_plots <- function(dir_path) {
+  # List all files in the directory ending with ".rds"
+  rds_files <- list.files(dir_path, pattern = "\\.rds$", full.names = TRUE)
+
+  # Filter files that start with "MAUDE_guide_stats_"
+  matching_files <- rds_files[grepl("MAUDE_guide_stats_", basename(rds_files))]
+
+  # Loop over each matching file
+  for (file in matching_files) {
+    # Extract the info_suffix
+    filename <- basename(file)
+    info_suffix <- sub("^MAUDE_guide_stats_", "", sub("\\.rds$", "", filename))
+
+    # Run the commands
+    Hits_current_settings <- add_info_wrapper(info_suffix)
+    plot_qq_maude(Hits_current_settings, info_suffix)
+  }
+}
+
+
+generate_qq_plots <- function(base_name,
+                              file_path = get("rds_output_folder", envir = .GlobalEnv),
+                              suffixes = c("", "_RI", "_D0", "_RI_D0")) {
+  
+  file_path <- paste0(file_path, "MAUDE_gene_stats")
+  # Use invisible() to suppress unwanted NULL outputs
+  invisible(lapply(suffixes, function(suffix) {
+    # Create the file path for each suffix
+    file <- paste0(file_path, "_", base_name, suffix, ".rds")
+    
+    # Check if the file exists before attempting to read it
+    if (file.exists(file)) {
+      maude_gene_stats <- readRDS(file)
+      plot_qq_maude(maude_gene_stats, paste(base_name, suffix))
+    } else {
+      # If the file doesn't exist, print a message and skip this iteration
+      cat(paste("File not found, skipping:", file, "\n"))
+    }
+  }))
+}
+compare_Hits <- function(df1, df2, top_N = 50) {
+  
+  # Sort both dataframes by FDR (low to high)
+  df1_sorted <- df1[order(df1$FDR), ]
+  df2_sorted <- df2[order(df2$FDR), ]
+  
+  # Get the top N entries based on FDR
+  df1_top <- df1_sorted[1:top_N, ]
+  df2_top <- df2_sorted[1:top_N, ]
+  
+  # 1. Overlap among top_N (by FDR)
+  overlap <- merge(df1_top, df2_top, by = "entrez", all = FALSE)
+  
+  # 2. Dropouts among top_N (by FDR)
+  dropouts <- base::setdiff(df1_top$entrez, df2_top$entrez)
+  df1_dropouts <- df1_top[df1_top$entrez %in% dropouts, ]
+  
+  # 3. Statistics dataframe
+  # Number of overlaps
+  num_overlaps <- nrow(overlap)
+  
+  # Number of dropouts
+  num_dropouts <- nrow(df1_dropouts)
+  
+  # Calculate ranks for FDR in both dataframes
+  df1_sorted$rank_FDR <- rank(df1_sorted$FDR)
+  df2_sorted$rank_FDR <- rank(df2_sorted$FDR)
+  
+  # Merge the two sorted dataframes by 'entrez' to match pairs
+  merged_df <- merge(df1_sorted[, c("entrez", "rank_FDR")], 
+                     df2_sorted[, c("entrez", "rank_FDR")], 
+                     by = "entrez", 
+                     suffixes = c("_df1", "_df2"))
+  
+  # 4. Correlation between ranks in top N (paired test)
+  rank_correlation_topN <- cor(merged_df$rank_FDR_df1[1:top_N], merged_df$rank_FDR_df2[1:top_N], method = "pearson")
+  
+  # 5. Correlation between ranks for all entries (paired test)
+  rank_correlation_all <- cor(merged_df$rank_FDR_df1, merged_df$rank_FDR_df2, method = "pearson")
+  
+  # Split significanceZ into > 0 and <= 0
+  df1_top_posZ <- df1_top[df1_top$significanceZ > 0, ]
+  df2_top_posZ <- df2_top[df2_top$significanceZ > 0, ]
+  
+  df1_top_negZ <- df1_top[df1_top$significanceZ <= 0, ]
+  df2_top_negZ <- df2_top[df2_top$significanceZ <= 0, ]
+  
+  # Median and mean changes in significance Z and FDR for significanceZ > 0
+  median_change_Z_pos <- median(df1_top_posZ$significanceZ - df2_top_posZ$significanceZ)
+  mean_change_Z_pos <- mean(df1_top_posZ$significanceZ - df2_top_posZ$significanceZ)
+  
+  # Median and mean changes in significance Z and FDR for significanceZ <= 0
+  median_change_Z_neg <- median(df1_top_negZ$significanceZ - df2_top_negZ$significanceZ)
+  mean_change_Z_neg <- mean(df1_top_negZ$significanceZ - df2_top_negZ$significanceZ)
+  
+  # Median and mean changes in FDR
+  median_change_FDR <- median(df1_top$FDR - df2_top$FDR)
+  mean_change_FDR <- mean(df1_top$FDR - df2_top$FDR)
+  
+  # Create the statistics dataframe
+  stats <- data.frame(
+    Statistic = c(paste0("Number of overlaps (top ",top_N,")"),paste0("Number of dropouts (top ",top_N,")"), 
+                  paste0("Correlation between ranks (top ",top_N,")"), "Correlation between ranks (all)", 
+                  "Median change in significance Z+", "Mean change in significance Z+", 
+                  "Median change in significance Z-", "Mean change in significance Z-", 
+                  "Median change in FDR", "Mean change in FDR"),
+    Value = c(num_overlaps, num_dropouts, rank_correlation_topN, rank_correlation_all, 
+              median_change_Z_pos, mean_change_Z_pos, median_change_Z_neg, mean_change_Z_neg, 
+              median_change_FDR, mean_change_FDR)
+  )
+  
+  # Return the list of dataframes
+  return(list(
+    Overlap = overlap,
+    Dropouts = df1_dropouts,
+    Statistics = stats
+  ))
+}
+
+# Create a smaller version of compare_versions for the specific four dataframes
+compare_methods <- function(N = 100) {
+  # List of the four dataframes
+  df_list <- list(
+    "Hits_lukas_umis" = Hits_lukas_umis,
+    "Hits_lukas_umis_RI" = Hits_lukas_umis_RI,
+    "Hits_lukas_umis_sum_RI" = Hits_lukas_umis_sum_RI,
+    "Hits_lukas_umis_rep_RI" = Hits_lukas_umis_rep_RI
+  )
+  
+  # Helper function to calculate AHSA1 position
+  AHSA1_position_finder <- function(df, name) {
+    sorted_df <- df %>%
+      arrange(significanceZ)  # Sort by significanceZ (assuming column exists)
+    
+    # Find the row where the 'entrez' value is 10598
+    target_row <- sorted_df %>% filter(entrez == 10598)
+    
+    if (nrow(target_row) > 0) {
+      position <- which(sorted_df$entrez == 10598)
+      significanceZ_value <- target_row$significanceZ
+      cat(paste("AHSA1 position in", name, "is", position, "with significanceZ value of", significanceZ_value, "\n"))
+    } else {
+      cat(paste("AHSA1 (entrez 10598) not found in", name, "\n"))
+    }
+  }
+  
+  # Compare all combinations of the dataframes
+  comparisons <- list()
+  
+  df_names <- names(df_list)
+  
+  # Loop through all possible pairs of dataframes
+  for (i in 1:(length(df_names) - 1)) {
+    cat(paste("------------------------------------------------","\n"))
+    for (j in (i + 1):length(df_names)) {
+      cat(paste("------------------------------------------------","\n"))
+      name_i <- df_names[i]
+      name_j <- df_names[j]
+      
+      # Get the dataframes
+      df_i <- df_list[[name_i]]
+      df_j <- df_list[[name_j]]
+      
+      # Calculate the intersection
+      intersect_df <- get_top_N_intersect(df_i, df_j, N = N)
+      n_intersect <- nrow(intersect_df)
+      
+      # Print intersection and AHSA1 positions
+      cat(paste(name_i, "vs", name_j, "Number of intersects:", n_intersect, "\n"))
+      AHSA1_position_finder(df_i, name_i)
+      AHSA1_position_finder(df_j, name_j)
+      
+      # Store the results
+      comparisons[[paste(name_i, "vs", name_j)]] <- list(
+        intersect = intersect_df,
+        n_intersect = n_intersect
+      )
+    }
+  }
+  
+  return(comparisons)
+}
+
+```
+
+## Create QQplots for the p-values. 
+Lots of debris from old runs in here. Use with caution
+
+```{r QQplot, eval=FALSE}
+#===============================================================================
+# Batch generate ALL qq plots
+# add suffixes <- c(list_of_suffixes_without_.rds); example <- c("", "_RI")
+#===============================================================================
+plot_all_qq_plots(rds_output_folder)
+#===============================================================================
+# Batch generate specific qq plots
+# add suffixes <- c(list_of_suffixes_without_.rds); example <- c("", "_RI")
+#===============================================================================
+generate_qq_plots("lukas_reads")
+generate_qq_plots("lukas_umis")
+generate_qq_plots("john_reads")
+generate_qq_plots("john_rf_umis")
+
+#===============================================================================
+# Create Hit lists
+#===============================================================================
+# use my_Hits <- add_info_wrapper("my_file_suffix")
+Hits_current_settings <- add_info_wrapper(file_info_suffix)
+plot_qq_maude(Hits_current_settings, "Sublibraries as replicates combined")
+plot_qq_maude(export_df, "Sublibraries as replicates combined")
+Hits_sublib <- add_info_wrapper("lukas_umis_rep_sublib_control_median_RI")
+Hits_lukas_umis_control_median_RI <- add_info_wrapper("lukas_umis_control_median_RI")
+Hits_lukas_umis_sum_control_median_RI <- add_info_wrapper("lukas_umis_sum_control_median_RI")
+Hits_sublib_combined <- add_info_wrapper("lukas_umis_rep_sublib_control_median_RI_0")
+
+#===============================================================================
+# Intersect 2 different Hit lists
+#===============================================================================
+top_1000_umis_intersect <- get_top_N_intersect(Hits_default,Hits_sublib_combined, N=1000)
+top_100_umis_intersect <- get_top_N_intersect(Hits_default,Hits_sublib_combined, N=100)
+top_100 <- get_top_N_intersect(Hits_current_settings,Hits_default, N=100)
+top_100_2 <- get_top_N_intersect(Hits_current_settings,Hits_sum, N=100)
+
+
+
+top_50_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=50)
+top_20_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=20)
+top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_lukas_reads_sum_RI,Hits_lukas_reads_rep_RI_rf, N=50)
+top_10_umis_intersect___sum <- get_top_N_intersect(Hits_lukas_umis_sum_RI,Hits_lukas_umis_RI, N=10)
+top_15_umis_intersect_control_median <- get_top_N_intersect(Hits_lukas_umis_sum_control_median_RI,Hits_lukas_umis_control_median_RI, N=100)
+top_10_umis_intersect_both <- get_top_N_intersect(top_15_umis_intersect_control_median,top_10_umis_intersect___sum, N=10)
+top_10_umis_sum_control_median <- get_top_N_intersect(Hits_lukas_umis_sum_control_median_RI,Hits_lukas_umis_sum_control_median_RI, N=10)
+saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=100), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_100.rds")
+saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=50), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_50.rds")
+saveRDS(get_top_N(Hits_lukas_umis_sum_RI,N=20), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_20.rds")
+#===============================================================================
+# Make individual qq-plots for the p-values of the hits. 
+#===============================================================================
+plot_qq_maude(Hits_lukas_umis_RI, "UMIs (one replicate method)")
+plot_qq_maude(Hits_lukas_umis_sum_RI, "UMIs (sum method)")
+plot_qq_maude(Hits_lukas_reads_RI, "reads (one replicate method)")
+plot_qq_maude(Hits_lukas_reads_sum_RI, "reads (sum method)")
+
+plot_qq_maude(Hits_lukas_umis_control_median_RI, "UMIs (one replicate method)(normalized)")
+plot_qq_maude(Hits_lukas_umis_sum_control_median_RI, "UMIs (sum method)(normalized)")
+plot_qq_maude(Hits_lukas_reads_control_median_RI, "reads (one replicate method)(normalized)")
+plot_qq_maude(Hits_lukas_reads_sum_control_median_RI, "reads (sum method)(normalized)")
+
+plot_qq_maude(Hits_lukas_reads, "Reads (no IR no RF)")
+plot_qq_maude(Hits_john_reads, "John Reads (no IR no RF)")
+plot_qq_maude(Hits_lukas_umis, "UMIs (no IR)")
+plot_qq_maude(Hits_john_umis, "John UMIs (no IR no RF)")
+plot_qq_maude(Hits_john_rf_umis, "John_rf UMIs (no IR)")
+
+plot_qq_maude(Hits_lukas_reads_RI, "Reads (no IR)")
+plot_qq_maude(Hits_john_reads_RI, "John Reads (no RF)")
+plot_qq_maude(Hits_lukas_reads_RI_rf, "Reads")
+# plot_qq_maude(Hits_john_reads_RI_rf, "John Reads")
+
+plot_qq_maude(Hits_lukas_umis_RI, "UMIs")
+plot_qq_maude(Hits_john_rf_umis_RI, "John UMIs")
+
+plot_qq_maude(Hits_lukas_reads_sum_RI_rf, "Reads replicate summation")
+plot_qq_maude(Hits_john_reads_sum_RI_rf, "John Reads replicate summation")
+plot_qq_maude(Hits_lukas_umis_sum_RI, "UMIs replicate summation")
+plot_qq_maude(Hits_john_rf_umis_sum_RI, "John UMIs replicate summation")
+
+plot_qq_maude(Hits_lukas_reads_rep_RI_rf, "Reads multiple replicates")
+plot_qq_maude(Hits_john_reads_rep_RI_rf, "John Reads multiple replicates")
+plot_qq_maude(Hits_lukas_umis_rep_RI, "UMIs multiple replicates")
+plot_qq_maude(Hits_john_rf_umis_rep_RI, "John UMIs multiple replicates")
+
+
+
+
+
+# Call the function to perform the comparisons
+results_methods <- compare_methods(N = 50)
+
+
+
+# maude_gene_stats_lukas <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_reads.rds"))
+# maude_gene_stats_john <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_john_reads.rds"))
+# 
+# top_1000_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john)
+# top_100_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john, N=100)
+
+```
+
+``` {r compare_subsamples_functions, eval=TRUE}
+compare_subsamples <- function(df_list, percentage_list, FDR_threshold = 0.05, top_N = NULL) {
+
+  # Helper function to apply FDR filter
+  apply_FDR_filter <- function(df, FDR_threshold) {
+    df <- df %>%
+      filter(FDR <= FDR_threshold)
+    return(df)
+  }
+  
+  # Helper function to calculate number of overlapping entrez
+  calculate_overlap <- function(reference_df, target_df) {
+    reference_entrez <- reference_df$entrez
+    target_entrez <- target_df$entrez
+    overlap_count <- sum(target_entrez %in% reference_entrez)
+    return(overlap_count)
+  }
+
+  # Function to process each scenario
+  process_scenario <- function(df_list, percentage_list, FDR_threshold, significance_filter = NULL, top_N = NULL) {
+    
+    # First dataframe as the reference (100% by definition)
+    reference_df <- df_list[[1]] %>%
+      apply_FDR_filter(FDR_threshold)
+    if (!is.null(significance_filter)) {
+      reference_df <- reference_df %>% filter(significanceZ * significance_filter > 0)
+    }
+    
+    # Initialize empty lists for storing results
+    Subsample_percentage <- list()
+    Overlap <- list()
+    Overlap_percentage <- list()
+    Total_Hits <- list()
+
+    # Loop through the dataframes and calculate overlap for each subsample percentage
+    for (i in seq_along(df_list)) {
+      
+      target_df <- df_list[[i]]
+      
+      # Apply FDR filter to the target dataframe
+      target_df <- apply_FDR_filter(target_df, FDR_threshold)
+      
+      # Apply additional significance filter if provided
+      if (!is.null(significance_filter)) {
+        target_df <- target_df %>% filter(significanceZ * significance_filter > 0)
+      }
+      print(nrow(target_df))
+      # Check overlap with the reference
+      overlap_count <- calculate_overlap(reference_df, target_df)
+      
+      # Calculate percentage overlap
+      overlap_percentage_value <- round((overlap_count / nrow(reference_df)) * 100,2)
+      
+      total_hits_value <- nrow(target_df)
+      
+      # Append results to the lists
+      Subsample_percentage <- c(Subsample_percentage, percentage_list[i])
+      Overlap <- c(Overlap, overlap_count)
+      Overlap_percentage <- c(Overlap_percentage, overlap_percentage_value)
+      Total_Hits <- c(Total_Hits, total_hits_value)
+    }
+    # Combine the lists into a final dataframe
+    final_results <- data.frame(
+      Subsample_percentage = unlist(Subsample_percentage),
+      Overlap = unlist(Overlap),
+      Overlap_percentage = unlist(Overlap_percentage),
+      Total_Hits = unlist(Total_Hits)
+    )
+    
+    # Return the final dataframe
+    return(final_results)
+  }
+
+  all_hits_df <- process_scenario(df_list, percentage_list, FDR_threshold)
+  print(all_hits_df)
+  sig_up_hits_df <- process_scenario(df_list, percentage_list, FDR_threshold, significance_filter = 1)
+  sig_down_hits_df <- process_scenario(df_list, percentage_list, FDR_threshold, significance_filter = -1)
+  results_list <- list(all_hits_df, sig_up_hits_df, sig_down_hits_df)
+  names(results_list) <- c("All_Hits", "Up_Hits" ,"Down_Hits")
+
+  plot_overlap <- function(df, title) {
+    # Ensure the input dataframe contains the necessary columns
+    if (!all(c("Subsample_percentage", "Overlap", "Overlap_percentage", "Total_Hits") %in% colnames(df))) {
+      stop("The dataframe must contain 'Subsample_percentage', 'Overlap', 'Total_Hits' and 'Overlap_percentage' columns.")
+    }
+    
+    # Create the plot
+    p <- ggplot(df, aes(x = Subsample_percentage)) +
+      geom_line(aes(y = Overlap_percentage), size = 1) + 
+      geom_point(aes(y = Overlap_percentage), size = 3) +
+      labs(
+        title = paste("Percentage of correct Hits for",title),
+        x = "Subsample Percentage",
+        y = "Overlap Percentage"
+      ) +
+      theme_bw()
+  
+    # Return the plot
+    return(p)
+  }
+  plot_total_hits <- function(df, title) {
+    # Ensure the input dataframe contains the necessary columns
+    if (!all(c("Subsample_percentage", "Overlap", "Overlap_percentage", "Total_Hits") %in% colnames(df))) {
+      stop("The dataframe must contain 'Subsample_percentage', 'Overlap', 'Total_Hits' and 'Overlap_percentage' columns.")
+    }
+    
+    # Create the plot
+    p <- ggplot(df, aes(x = Subsample_percentage)) +
+      geom_line(aes(y = Total_Hits), size = 1) + 
+      geom_point(aes(y = Total_Hits), size = 3) +
+      labs(
+        title = paste("Number of all Hits (not necessarily correct ones) for",title),
+        x = "Subsample Percentage",
+        y = "Total Hits"
+      ) +
+      theme_bw()
+  
+    # Return the plot
+    return(p)
+  }
+  # Loop over all dataframes in the results list and plot them
+  for (scenario_name in names(results_list)) {
+    p <- plot_overlap(results_list[[scenario_name]], scenario_name)
+    print(p) 
+    q <- plot_total_hits(results_list[[scenario_name]], scenario_name)
+    print(q)
+  }
+  return(results_list)
+}
+
+automate_comparison <- function(prefixstring, FDR_threshold = 0.05) {
+  # Get the current settings from the global environment
+  Hits_current_settings <- get("Hits_current_settings", envir = .GlobalEnv)
+  rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)
+  
+  # List all files in the rds output folder
+  rds_files <- list.files(rds_output_folder, pattern = paste0(".*", prefixstring, "_[0-9]+\\.rds$"), full.names = TRUE)
+  
+  # Extract the numbers from the file names (e.g., "lukas_reads_control_median_RI_25.rds" -> 25)
+  numbers <- as.numeric(gsub(paste0(".*", prefixstring, "_([0-9]+)\\.rds$"), "\\1", rds_files))
+  
+  # Generate the percentage list (starting from 100 and then descending from the available numbers)
+  percentage_list <- sort(numbers, decreasing = TRUE)
+  
+  # Generate Hits_sub_x using add_info_wrapper for each percentage in percentage_list
+  df_list <- lapply(percentage_list, function(perc) {
+    add_info_wrapper(paste0(prefixstring, "_", perc))
+  })
+  
+  # Call compare_subsamples with the generated df_list and percentage_list
+  result <- compare_subsamples(df_list = c(list(Hits_current_settings), df_list),
+                                percentage_list = c(100, percentage_list),
+                                FDR_threshold = FDR_threshold,
+                                top_N = NULL)
+  
+  return(result)
+}
+
+
+
+```
+
+``` {r compare_subsamples, eval=False}
+Hits_sub_25 <- add_info_wrapper("lukas_reads_control_median_RI_25")
+Hits_sub_50 <- add_info_wrapper("lukas_reads_control_median_RI_50")
+Hits_sub_75 <- add_info_wrapper("lukas_reads_control_median_RI_75")
+
+target_df <- Hits_sub_25 %>% filter(FDR <= 0.05)
+reference_df <- Hits_current_settings %>% filter(FDR <= 0.05)
+reference_entrez <- reference_df$entrez
+target_entrez <- target_df$entrez
+overlap_count <- sum(target_entrez %in% reference_entrez)
+print(overlap_count)
+print(setdiff(reference_entrez,target_entrez))
+
+test <- automate_comparison("lukas_reads_control_median_RI", FDR_threshold = 0.005)
+test <- compare_subsamples(df_list = list(Hits_current_settings,Hits_sub_75, Hits_sub_50, Hits_sub_25),
+                   percentage_list = c(100,75,50,25),
+                   FDR_threshold = 0.01,
+                   top_N = NULL)
+
+compare_100_75 <- compare_Hits(Hits_current_settings, Hits_sub_75, top_N=341)
+comp_overlap_100_75 <- compare_100_75$Overlap
+comp_dropout_100_75 <- compare_100_75$Dropouts
+comp_statistics_100_75 <- compare_100_75$Statistics
+compare_100_50 <- compare_Hits(Hits_current_settings, Hits_sub_50, top_N=341)
+comp_overlap_100_50 <- compare_100_50$Overlap
+comp_dropout_100_50 <- compare_100_50$Dropouts
+comp_statistics_100_50 <- compare_100_50$Statistics
+compare_100_25 <- compare_Hits(Hits_current_settings, Hits_sub_25, top_N=341)
+comp_overlap_100_25 <- compare_100_25$Overlap
+comp_dropout_100_25 <- compare_100_25$Dropouts
+comp_statistics_100_25 <- compare_100_25$Statistics
+compare_statistics <- comp_statistics_100_75 %>% 
+  rename(c_100_vs_75 = Value) %>% 
+  mutate(c_100_vs_50 = comp_statistics_100_50$Value,
+         c_100_vs_25 = comp_statistics_100_25$Value)
+
+
+```
+
+``` {r Manhattan_plot, eval=False}
+Hits_current_settings <- add_info_wrapper(file_info_suffix)
+if (length(include_controls_list) > 0) {
+  for (control_gene in include_controls_list) {
+    # here we remove everything after the last _, so stuff like AAVS1_9 and
+    # AAVS1_13 are both treated as AAVS1
+    control_gene <- sub("_[^_]*$", "", control_gene)
+    Hits_current_settings$symbol[grepl(control_gene, Hits_current_settings$entrez)] <- control_gene
+  }
+  # Filter out rows where the 'symbol' is in the include_controls_list
+  Hits_current_settings_no_controls <- Hits_current_settings %>% 
+    filter(!symbol %in% include_controls_list | is.na(symbol))
+}
+Hits_df <- Hits_current_settings %>% 
+  filter(significanceZ <= 0) %>% 
+  mutate(logP = -log10(FDR))
+
+# Define the cluster and protein names
+clusters <- data.frame(
+  cluster_name = c(
+    "Protein ufmylation", 
+    "mTORC1-mediated signalling (Ragulator complex/RagC protein)", 
+    "vesicles thetering complex (HOPS complex)", 
+    "ER membrane insertion complex, and GET complex", 
+    "GTPase activating proteins (GAP)", 
+    "Regulation of lysosome size (BLOC-1 and BORC complexes)", 
+    "Other VPS proteins", 
+    "Other Rab proteins"
+  ),
+  color = c(
+    "#ff0000", "#ffe065", "#47b200", "#65ffa3", 
+    "#008eb2", "#6566ff", "black", "black"
+  ),
+  proteins = c(
+    "UFL1, CDK5RAP3, UFM1, UBA5", 
+    "LAMTOR1, RRAGC, LAMTOR5", 
+    "VPS39, VPS33A, VPS41", 
+    "BAG6, GET1, GET4", 
+    "RAB3GAP1, RAB3GAP2, TBC1D20", 
+    "BLOC1S1, SNAPIN", 
+    "VPS13C, VPS53", 
+    "RAB18"
+  )
+)
+
+# Flatten protein names into a list
+protein_list <- unlist(strsplit(clusters$proteins, ", "))
+
+# Create a new column in Hits_df to mark the cluster for each protein
+Hits_df$cluster <- sapply(Hits_df$symbol, function(x) {
+  # Check which cluster the protein belongs to
+  match <- which(sapply(clusters$proteins, function(proteins) x %in% strsplit(proteins, ", ")[[1]]))
+  if (length(match) > 0) {
+    return(clusters$cluster_name[match])
+  } else {
+    return("Other")  # Default category for proteins not listed
+  }
+})
+
+Hits_df$cluster_color <- sapply(Hits_df$cluster, function(x) {
+  # Check if the cluster is in the list, else assign grey
+  if (x %in% clusters$cluster_name) {
+    return(clusters$color[clusters$cluster_name == x])
+  } else {
+    return("grey")  # Assign grey to other genes
+  }
+})
+# Define the clusters excluding "Other"
+clusters_excluding_other <- unique(Hits_df$cluster[Hits_df$cluster != "Other"])
+
+# Define the number of clusters excluding "Other"
+num_clusters <- length(clusters_excluding_other)
+
+# Define the size of each cluster's range (divide 1000 by the number of clusters - 1)
+range_size <- 1000 / (num_clusters)
+
+# Initialize a vector to store the ranks
+rank_vector <- numeric(nrow(Hits_df))
+
+# Loop through each cluster excluding "Other"
+for (cluster_name in clusters_excluding_other) {
+  # Get the rows for the current cluster
+  cluster_rows <- Hits_df$cluster == cluster_name
+  
+  # Calculate the range for this cluster
+  cluster_start <- (which(clusters_excluding_other == cluster_name) - 1) * range_size + 1
+  cluster_end <- cluster_start + range_size - 1
+  
+  # Assign random ranks within this cluster's range
+  rank_vector[cluster_rows] <- sample(cluster_start:cluster_end, sum(cluster_rows), replace = TRUE)
+}
+
+# Assign ranks to "Other" cluster (random ranks from 1 to 1000)
+rank_vector[Hits_df$cluster == "Other"] <- sample(1:1000, sum(Hits_df$cluster == "Other"), replace = TRUE)
+
+# Add the new rank column to the Hits_df dataframe
+Hits_df$rank <- rank_vector
+
+# Create the Manhattan plot
+p <- ggplot(Hits_df, aes(x = rank, y = significanceZ, color = cluster_color)) +
+  geom_point(aes(size = ifelse(cluster != "Other", 3, 1)), alpha = 0.8) +
+  scale_size_continuous(range = c(1, 5)) +
+  scale_y_reverse() +
+  #scale_y_log10() +
+  scale_color_identity() +  # Use the actual colors defined for each cluster
+  labs(
+    title = "Non-Essential Gene Groups",
+    y = "significanceZ"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",  # Remove legend for clusters (you can add one if needed)
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    
+    # Remove X-axis and its label, ticks, and lines
+    axis.line.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) + 
+  # Use geom_text_repel to avoid label overlap and label non-"Other" points
+  geom_text_repel(
+    data = subset(Hits_df, cluster != "Other"),  # Only label non-"Other" points
+    aes(x = rank, y = significanceZ, label = symbol),
+    color = "black",
+    size = 3,
+    box.padding = 0.1,  # Increase to move text away from points if needed
+    point.padding = 0.2,  # Adjust text padding around points
+    max.overlaps = 10,   # Adjust this value to limit the number of overlaps
+    segment.color = NA,  # No lines connecting text and point
+    vjust = -2          # Position text above the dot
+  )
+
+# Display the plot
+print(p)
+
+cluster_labels <- clusters
+# Create a blank plot with adjusted limits
+# Create a blank plot with adjusted limits
+# Create a blank plot with adjusted limits
+plot(
+  x = 1, y = 1, type = "n", 
+  xlim = c(0, 500), ylim = c(1, nrow(cluster_labels) + 1),  # Increase xlim to make space for the text
+  xlab = "", ylab = "", 
+  axes = FALSE,  # Remove axes
+  main = "Cluster Names and Colors"
+)
+
+# Plot each cluster with a single dot and its name next to it
+for (i in 1:nrow(cluster_labels)) {
+  # Plot the dot on the left (x = 0) for each cluster (ensure the dot is visible)
+  points(1, nrow(cluster_labels) - i + 1, pch = 16, cex = 2, col = cluster_labels$color[i])  
+  # Add the cluster name to the right of the dot (slightly shifted right)
+  text(1.5, nrow(cluster_labels) - i + 1, cluster_labels$cluster_name[i], pos = 4, cex = 1.2)  
+}
+
+```
+
+``` {r test_1s, eval=FALSE}
+# 1. Count the number of 1s in the input, lower, and upper columns individually
+count_1s_input <- sum(maude_counts_df$input == 1)
+count_1s_lower <- sum(maude_counts_df$lower == 1)
+count_1s_upper <- sum(maude_counts_df$upper == 1)
+
+# Print individual counts
+cat("Count of 1's in 'input':", count_1s_input, "\n")
+cat("Count of 1's in 'lower':", count_1s_lower, "\n")
+cat("Count of 1's in 'upper':", count_1s_upper, "\n")
+
+# 2. Count rows where all three columns are 1 (input, lower, upper)
+count_all_ones <- sum(maude_counts_df$input == 1 & maude_counts_df$lower == 1 & maude_counts_df$upper == 1)
+cat("Rows where all three columns are 1:", count_all_ones, "\n")
+
+# 3. Separate counts based on 'isNontargeting' column (TRUE and FALSE)
+
+# For rows where 'isNontargeting' is TRUE
+df_true <- maude_counts_df[maude_counts_df$isNontargeting == TRUE, ]
+count_1s_input_true <- sum(df_true$input == 1)
+count_1s_lower_true <- sum(df_true$lower == 1)
+count_1s_upper_true <- sum(df_true$upper == 1)
+count_all_ones_true <- sum(df_true$input == 1 & df_true$lower == 1 & df_true$upper == 1)
+
+cat("\nFor isNontargeting == TRUE:\n")
+cat("Count of 1's in 'input':", count_1s_input_true, "\n")
+cat("Count of 1's in 'lower':", count_1s_lower_true, "\n")
+cat("Count of 1's in 'upper':", count_1s_upper_true, "\n")
+cat("Rows where all three columns are 1:", count_all_ones_true, "\n")
+
+# For rows where 'isNontargeting' is FALSE
+df_false <- maude_counts_df[maude_counts_df$isNontargeting == FALSE, ]
+count_1s_input_false <- sum(df_false$input == 1)
+count_1s_lower_false <- sum(df_false$lower == 1)
+count_1s_upper_false <- sum(df_false$upper == 1)
+count_all_ones_false <- sum(df_false$input == 1 & df_false$lower == 1 & df_false$upper == 1)
+
+cat("\nFor isNontargeting == FALSE:\n")
+cat("Count of 1's in 'input':", count_1s_input_false, "\n")
+cat("Count of 1's in 'lower':", count_1s_lower_false, "\n")
+cat("Count of 1's in 'upper':", count_1s_upper_false, "\n")
+cat("Rows where all three columns are 1:", count_all_ones_false, "\n")
+
+```
+
+```{r Roche_compare_functions, eval=TRUE}
+Hits_current_settings <- add_info_wrapper(file_info_suffix)
+if (length(include_controls_list) > 0) {
+  for (control_gene in include_controls_list) {
+    # here we remove everything after the last _, so stuff like AAVS1_9 and
+    # AAVS1_13 are both treated as AAVS1
+    control_gene <- sub("_[^_]*$", "", control_gene)
+    Hits_current_settings$symbol[grepl(control_gene, Hits_current_settings$entrez)] <- control_gene
+  }
+  # Filter out rows where the 'symbol' is in the include_controls_list
+  Hits_current_settings_no_controls <- Hits_current_settings %>% 
+    filter(!symbol %in% include_controls_list | is.na(symbol))
+}
+
+roche_folder <- make_clean_dir(output_folder, "/Roche_compare")
+sup_3_path <- get_file_path(roche_folder, "41467_2025_61039_MOESM5_ESM.xls")
+sup_3 <- read_excel(sup_3_path)
+sup_3$GeneID <- gsub("GeneID:", "", sup_3$GeneID)
+
+compare_df <- sup_3 %>% 
+  rename(Rho_pos = Rho_Round1Pos_to_Bulk_enriched,
+         Rho_neg = Rho_Round1Neg_to_Bulk_enriched,
+         entrez = GeneID,
+         symbol = Symbol,
+         LFC_pos = MedianLFC_Round1Pos_to_Bulk_enriched,
+         LFC_neg = MedianLFC_Round1Neg_to_Bulk_enriched) %>% 
+  select(entrez, symbol, Rho_pos, Rho_neg, LFC_pos,LFC_neg)
+
+waterfall_roche_compare <- function(Hits_df,
+                                      comp_df,
+                                      signif_lines = TRUE,
+                                      signif_level = 0.05,
+                                      box_padding = 0.8,
+                                      no_text = FALSE,
+                                      mark_special = NULL,
+                                      rho_neg_thresh = 0.0001,
+                                      rho_pos_thresh = 0.0001,
+                                      lfc_neg_thresh = 1.5,
+                                      lfc_pos_thresh = 1.5) {
+  
+  # Create rank column
+  Hits_df <- Hits_df %>%
+    mutate(rank = rank(significanceZ, ties.method = "first"))
+  signif_df <- Hits_df %>% 
+    filter(FDR <= signif_level)
+  # Define the Limits for annotation boxes
+  y_min   <- min(Hits_df$significanceZ, na.rm = TRUE)
+  y_max   <- max(Hits_df$significanceZ, na.rm = TRUE)
+  y_range <- y_max - y_min
+  
+  # Box geometry (relative to overall range)
+  box_height <- 0.06 * y_range   # 8% of range high
+  box_gap    <- 0.02 * y_range   # 3% of range between boxes
+  
+  # Centers of the two boxes (on y-axis)
+  y_center1 <- y_min           # lower box
+  y_center2 <- y_center1 + box_height + box_gap    # upper box
+  
+  # x range (can reuse for both boxes)
+  x_min_box <- max(Hits_df$rank) - 3000
+  x_max_box <- max(Hits_df$rank) + 500
+  
+  # Filter for Rho_neg and Rho_pos hits from comp_df
+  rho_neg_hits_df <- comp_df %>%
+    filter(Rho_neg <= rho_neg_thresh & 2^LFC_neg >= lfc_neg_thresh) %>%
+    rename(symbol_rho = symbol)  # Rename the symbol to avoid conflict
+  
+  rho_pos_hits_df <- comp_df %>%
+    filter(Rho_pos <= rho_pos_thresh & 2^LFC_pos >= lfc_pos_thresh) %>%
+    rename(symbol_rho = symbol)  # Rename the symbol to avoid conflict
+  
+  # Filter only the rows in Hits_df that are in rho_neg_hits_df and rho_pos_hits_df
+  rho_neg_hits_df <- inner_join(Hits_df, rho_neg_hits_df, by = "entrez")
+  rho_pos_hits_df <- inner_join(Hits_df, rho_pos_hits_df, by = "entrez")
+  
+  # Start base plot
+  p <- ggplot(Hits_df, aes(x = rank, y = significanceZ)) +
+    geom_point(color = "lightgrey", size = 1) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.3) +
+    theme_bw() +
+    labs(
+      x = "Gene rank",
+      y = "Significance Z-score",
+      title = "Significance Z-score by gene rank"
+    )
+  
+  # Mark Rho_neg hits
+  if (nrow(rho_neg_hits_df) > 0) {
+    p <- p + 
+      geom_point(
+        data = rho_neg_hits_df,
+        aes(x = rank, y = significanceZ),
+        color = "cyan", size = 2
+      ) +
+      annotate("rect",
+               xmin = x_min_box,
+               xmax = x_max_box,
+               ymin = y_center2 - box_height / 2,
+               ymax = y_center2 + box_height / 2,
+               fill = "white", color = "black", size = 0.3) +
+      annotate("point",
+               x = x_min_box + 200,
+               y = y_center2,
+               color = "cyan", size = 2) +
+      annotate("text",
+               x = x_min_box + 400,
+               y = y_center2,
+               label = "Rho Neg hits", hjust = 0, size = 3)
+  }
+
+  # Mark Rho_pos hits
+  if (nrow(rho_pos_hits_df) > 0) {
+    p <- p + 
+      geom_point(
+        data = rho_pos_hits_df,
+        aes(x = rank, y = significanceZ),
+        color = "orange", size = 2
+      ) +
+      annotate("rect",
+               xmin = x_min_box,
+               xmax = x_max_box,
+               ymin = y_center1 - box_height / 2,
+               ymax = y_center1 + box_height / 2,
+               fill = "white", color = "black", size = 0.3) +
+      annotate("point",
+               x = x_min_box + 200,
+               y = y_center1,
+               color = "orange", size = 2) +
+      annotate("text",
+               x = x_min_box + 400,
+               y = y_center1,
+               label = "Rho Pos hits", hjust = 0, size = 3)
+  }
+
+  # Add lines if requested (now based on input threshold for significance)
+  
+  if (isTRUE(signif_lines)) {
+
+    ## Lowest positive significanceZ (closest to zero, > 0)
+    pos_df <- signif_df %>% filter(significanceZ > 0)
+    if (nrow(pos_df) > 0) {
+      y_pos <- min(pos_df$significanceZ, na.rm = TRUE)
+      p <- p +
+        geom_hline(
+          yintercept = y_pos,
+          linetype = "dashed",
+          color = "red",
+          size = 0.3
+        )
+    }
+
+    ## Negative significanceZ with smallest absolute value (closest to zero)
+    neg_df <- signif_df %>% filter(significanceZ < 0)
+    if (nrow(neg_df) > 0) {
+      # largest negative value, e.g. -1 is "closer to zero" than -3
+      y_neg <- max(neg_df$significanceZ, na.rm = TRUE)
+      p <- p +
+        geom_hline(
+          yintercept = y_neg,
+          linetype = "dashed",
+          color = "red",
+          size = 0.3
+        )
+    }
+  }
+
+  
+  # Mark special symbols (can be multiple)
+  if (!is.null(mark_special) && length(mark_special) > 0 && "symbol" %in% names(Hits_df)) {
+    special_df <- Hits_df %>% filter(symbol %in% mark_special)
+    
+    if (nrow(special_df) > 0) {
+      p <- p +
+        geom_point(
+          data = special_df,
+          aes(x = rank, y = significanceZ),
+          shape = 17,
+          color = "orange",
+          size = 4
+        ) +
+        geom_text_repel(
+          data = special_df,
+          aes(x = rank, y = significanceZ, label = symbol),
+          color = "orange",
+          size = 4,
+          box.padding = 1,
+          nudge_x = ifelse(special_df$significanceZ > 0, -500, 500),
+          nudge_y = ifelse(special_df$significanceZ > 0, y_range * (0.05), y_range * (-0.05)),
+          force = 4
+        )
+    }
+  }
+  
+  return(p)
+}
+
+make_cor_heatmap <- function(df, name = ""){
+  # Select only the numeric columns (exclude non-numeric columns like symbol, entrez, etc.)
+  cor_df <- df %>% select(-c(symbol, entrez, numGuides, seq, sgRNA))
+  
+  # Compute the Pearson correlation matrix
+  cor_matrix <- cor(cor_df, method = "pearson")
+  
+  # Reshape the correlation matrix for ggplot2
+  melted_cor_matrix <- reshape::melt(cor_matrix)
+  
+  # Ensure the variable names are correctly assigned for ggplot
+  colnames(melted_cor_matrix) <- c("Var1", "Var2", "value")  # Rename columns
+  
+  # Create a heatmap of the correlation matrix
+  p <- ggplot(melted_cor_matrix, aes(x = Var1, y = Var2, fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "red", high = "green", mid = "white", midpoint = 0) +
+    theme_bw() +
+    labs(title = paste("Pearson Correlation Heatmap", name)) +
+    theme(axis.text.x = element_text(angle = 25, hjust = 1)) 
+  
+  print(p)
+  return(cor_matrix)
+}
+
+
+```
+
+``` {r Roche_compare, eval=FALSE}
+
+roche_folder <- make_clean_dir(output_folder, "/Roche_compare")
+sup_3_path <- get_file_path(roche_folder, "41467_2025_61039_MOESM5_ESM.xls")
+sup_3 <- read_excel(sup_3_path)
+
+sup_3$GeneID <- gsub("GeneID:", "", sup_3$GeneID)
+sup_3 <- sup_3 %>%
+  rename(
+    entrez = GeneID,
+    Rho_enriched = Rho_Bulk_to_Reference_enriched,
+    MedianLFC_enriched = MedianLFC_Bulk_to_Reference_enriched,
+    AdjPval_enriched = AdjPval_Bulk_to_Reference_enriched,
+    Pval_enriched = Pval_Bulk_to_Reference_enriched,
+    RhoRank_enriched = RhoRank_Bulk_to_Reference_enriched,
+    Rho_depleted = Rho_Bulk_to_Reference_depleted,
+    MedianLFC_depleted = MedianLFC_Bulk_to_Reference_depleted,
+    AdjPval_depleted = AdjPval_Bulk_to_Reference_depleted,
+    Pval_depleted = Pval_Bulk_to_Reference_depleted,
+    RhoRank_depleted = RhoRank_Bulk_to_Reference_depleted
+  ) %>% 
+  select(
+    entrez,
+    Rho_enriched,
+    MedianLFC_enriched,
+    AdjPval_enriched,
+    Pval_enriched,
+    RhoRank_enriched,
+    Rho_depleted,
+    MedianLFC_depleted,
+    AdjPval_depleted,
+    Pval_depleted,
+    RhoRank_depleted
+  )
+compare_df <- merge(sup_3, export_df, by = "entrez")
+###############################################################################
+# Venn Diagramm as requested by Nico
+nico_compare_df <- sup_3 %>% 
+  rename(Rho_pos = Rho_Round1Pos_to_Bulk_enriched,
+         Rho_neg = Rho_Round1Neg_to_Bulk_enriched,
+         entrez = GeneID,
+         symbol = Symbol,
+         LFC_pos = MedianLFC_Round1Pos_to_Bulk_enriched,
+         LFC_neg = MedianLFC_Round1Neg_to_Bulk_enriched) %>% 
+  select(entrez, symbol, Rho_pos, Rho_neg, LFC_pos,LFC_neg)
+nico_compare_df <- merge(nico_compare_df, export_df, by = "entrez")
+
+  
+
+nico_hits_intersect_top_neg <- nico_compare_df %>% filter(significanceZ > 0 & FDR <= 0.05 & Rho_neg <= 0.0001 & 2^LFC_neg >= 1.5)
+nico_hits_intersect_low_pos <- nico_compare_df %>% filter(significanceZ < 0 & FDR <= 0.05 & Rho_pos <= 0.0001 & 2^LFC_pos >= 1.5)
+
+our_hits_df <- nico_compare_df %>% filter(significanceZ > 0 & FDR <= 0.05)
+roche_hits_df <- nico_compare_df %>% filter(Rho_neg <= 0.0001 & 2^LFC_neg >= 1.5)
+
+our_hits <- our_hits_df$entrez
+roche_hits <- roche_hits_df$entrez
+
+
+# Create the Venn as a grob (plot object)
+venn_2 <- venn.diagram(
+  x = list(
+    our_hits = our_hits,
+    roche_hits = roche_hits
+  ),
+  filename = NULL,          # NULL = return a grid object instead of saving to file
+  fill = c("purple", "cyan"),
+  alpha = 0.5,              # transparency
+  cex = 1.5, 
+  cat.pos  = c(0, 0),      # 90° = above each circle
+  cat.dist = c(0.05, 0.05),  # distance from the circle border
+  cat.cex  = 1.5# size of set names
+)
+
+# Draw it in the plotting window
+grid.newpage()
+grid.draw(venn_2)
+
+
+our_hits_df <- nico_compare_df %>% filter(significanceZ < 0 & FDR <= 0.05)
+roche_hits_df <- nico_compare_df %>% filter(Rho_pos <= 0.0001 & 2^LFC_pos >= 1.5)
+
+our_hits <- our_hits_df$entrez
+roche_hits <- roche_hits_df$entrez
+
+
+# Create the Venn as a grob (plot object)
+venn_2 <- venn.diagram(
+  x = list(
+    our_hits = our_hits,
+    roche_hits = roche_hits
+  ),
+  filename = NULL,          # NULL = return a grid object instead of saving to file
+  fill = c("red", "yellow"),
+  alpha = 0.5,              # transparency
+  cex = 1.5, 
+  cat.pos  = c(0, 0),      # 90° = above each circle
+  cat.dist = c(0.05, 0.05),  # distance from the circle border
+  cat.cex  = 1.5# size of set names
+)
+
+# Draw it in the plotting window
+grid.newpage()
+grid.draw(venn_2)
+###############################################################################
+
+
+
+
+
+waterfall_roche_compare(Hits_current_settings_no_controls, compare_df)
+
+
+
+################################################################################
+upper_cut <- compare_df %>% 
+  filter(significanceZ > 0)
+under_cut <- compare_df %>% 
+  filter(significanceZ < 0)
+
+significant_df <- compare_df %>%
+  filter(FDR <= 0.05 | AdjPval_enriched <= 0.05 | AdjPval_depleted <= 0.05)
+
+significanter_df <- compare_df %>%
+  filter((FDR <= 0.05 & AdjPval_enriched <= 0.05) | (AdjPval_depleted <= 0.05 & FDR <= 0.05))
+
+colnames(compare_df)
+ggplot(compare_df, aes(x = MedianLFC_enriched, y = significanceZ)) +
+  geom_point() +  # Add points for scatter plot
+  labs(x = "Median LFC Enriched", y = "Significance Z", 
+       title = "compare_df: Median LFC Enriched vs. Significance Z") +
+  theme_bw()  # Optional: for a clean, minimalistic theme
+ggplot(significant_df, aes(x = MedianLFC_enriched, y = significanceZ)) +
+  geom_point() +  # Add points for scatter plot
+  labs(x = "Median LFC Enriched", y = "Significance Z", 
+       title = "significant_df: Median LFC Enriched vs. Significance Z") +
+  theme_bw()  # Optional: for a clean, minimalistic theme
+# Calculate Spearman rank correlation between two columns
+spearman_corr <- cor.test(compare_df$AdjPval_enriched, compare_df$FDR, method = "spearman")
+# Print the result
+print(spearman_corr)
+
+spearman_corr <- cor.test(compare_df$Pval_enriched, compare_df$p.value, method = "spearman")
+# Print the result
+print(spearman_corr)
+
+spearman_corr <- cor.test(compare_df$MedianLFC_enriched, compare_df$significanceZ, method = "spearman")
+# Print the result
+print(spearman_corr)
+spearman_corr <- cor.test(significant_df$MedianLFC_depleted, significant_df$significanceZ, method = "spearman")
+# Print the result
+print(spearman_corr)
+
+cor_df <- compare_df %>% select(-c(symbol, entrez, numGuides, seq, sgRNA, ))
+cor_matrix <- cor(cor_df, method = "pearson")
+
+
+
+make_cor_heatmap(compare_df, "compare_df")
+make_cor_heatmap(under_cut, "under_cut")
+make_cor_heatmap(upper_cut, "upper_cut")
+print(make_cor_heatmap(significant_df, "significant_df"))
+
+excel_file_path <- get_file_path(output_folder,"roche_us_overlap.xlsx")
+write_xlsx(significanter_df, excel_file_path)
+```
+
+``` {r Autophagy_compare, eval=FALSE}
+autophagy_path <- get_file_path(roche_folder, "Autophagy_Genes.xlsx")
+autophagy_df <- read_excel(autophagy_path)
+autophagy_compare_df <- merge(autophagy_df, Hits_current_settings, by = "entrez")
+
+print(setdiff(autophagy_df$Autophagy_gene, autophagy_compare_df$Autophagy_gene))
+```
+
+``` {r Roche_compare, eval=FALSE}
+
+
+```

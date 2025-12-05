@@ -4,7 +4,7 @@
 #SBATCH --mem 36g               # Total memory required for the job
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 1                   # Number of CPUs
-#SBATCH -t 02:00:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 04:30:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
 #SBATCH -o /g/steinmetz/link/logs/log_subsample_fastq_files.out
 #SBATCH -e /g/steinmetz/link/logs//log_subsample_fastq_files.err
@@ -17,7 +17,7 @@
 # Input and output folder paths
 INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush"
 OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/"
-percentages=("75" "50" "25")
+percentages=("90" "80" "70" "60" "50" "40" "30" "20" "10")
 
 ################################################################################
 # END OF USER OPTIONS
@@ -48,12 +48,15 @@ for percent in "${percentages[@]}"; do
     if [ -d "$INPUT_FOLDER/ref" ]; then
         cp -r "$INPUT_FOLDER/ref" "$SUBDIR/"
     fi
-
-    # Copy files from the rds directory (excluding files with "MAUDE" in the name) to each subdirectory
+    
+    # Copy the entire rds folder from INPUT_FOLDER to SUBDIR
     if [ -d "$INPUT_FOLDER/rds" ]; then
-        # Find files in rds that don't contain "MAUDE" in the name and copy them to the subdirectory
-        find "$INPUT_FOLDER/rds" -type f ! -name "*MAUDE*" -exec cp {} "$SUBDIR/rds" \;
+        cp -r "$INPUT_FOLDER/rds" "$SUBDIR"
+        
+        # Inside the copied directory, delete any file containing "MAUDE"
+        find "$SUBDIR/rds" -type f -name "*MAUDE*" -exec rm {} \;
     fi
+    
     # Create QC_filtered_subsampled directory
     QC_DIR="$SUBDIR/QC_filtered_subsampled"
     mkdir -p "$QC_DIR"
