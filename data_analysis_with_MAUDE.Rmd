@@ -27,10 +27,10 @@ conflicts_prefer(dplyr::slice)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- FALSE
+first_time      <- TRUE
 
 # Directories
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush/"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/David_1/"
 john_folder     <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 
@@ -44,7 +44,7 @@ include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19",
 
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
-data_type           <- "reads"   # can be "reads" or "umis"
+data_type           <- "umis"   # can be "reads" or "umis"
 method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
@@ -293,8 +293,36 @@ read_file_to_df <- function(file_name,
     filter(sgRNA != "*")
   
   check_df <- merged_sgRNA_df %>% select(sgrna_id, sublib)
-  df <- df %>%
+  # First try: plain left_join
+  joined_df <- df %>%
     left_join(check_df, by = c("sgRNA" = "sgrna_id"))
+  
+  # Check for non-unique sgRNA in the result
+  if (any(duplicated(joined_df$sgRNA))) {
+    warning("Non-unique `sgRNA` after join; redoing join with 1:1 pairing by order.\n")
+    
+    # Add within-id index on both sides
+    df_idx <- df %>%
+      group_by(sgRNA) %>%
+      mutate(.pair_id = row_number()) %>%
+      ungroup()
+    
+    check_idx <- check_df %>%
+      group_by(sgrna_id) %>%
+      mutate(.pair_id = row_number()) %>%
+      ungroup()
+    
+    # Redo join using sgRNA/sgrna_id + the position
+    joined_df <- df_idx %>%
+      left_join(
+        check_idx,
+        by = c("sgRNA" = "sgrna_id", ".pair_id")
+      ) %>%
+      select(-.pair_id)      # clean up helper column
+    df <- joined_df
+  } else {
+    df <- joined_df
+  }
   
   if (check_alignments == TRUE) {
     cat("Checking wrong allignments for: ", name,"\n")

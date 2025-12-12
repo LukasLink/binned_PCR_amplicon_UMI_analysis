@@ -26,8 +26,13 @@ conflicts_prefer(dplyr::select)
 # User Options
 ###############
 
-output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush"
+output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/David_1"
 first_time <- TRUE
+library_source <- "lukas_custom" # can be lukas_custom or six_sublib_whole_genome
+
+lukas_custom_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/lukas_custom_libraries/h_ves_endo_sgRNA_library_full_info.xlsx"
+six_sublib_whole_genome_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s4.xlsx"
+six_sublib_whole_genome_counts_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s6.xlsx"
 # End of User Options
 ###############
 
@@ -59,7 +64,7 @@ rds_output_folder <- make_clean_dir(output_folder, "/rds/")
 ## Checking sequences to prepare for reference building
 Change the raw_path to the path where your fastq file is located, and then then run the read_raw block to have a look at your reads. This will also tell you the most common read length, which will be used for calculating SJDB_OVERHANG.
 ```{r read_raw, eval=FALSE}
-raw_path = "/g/steinmetz/battisti/Data_analyses/ampliconseq/Dual_rep_quart_rush/UMI_extracted/I_L1_1.fastq.gz"
+raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/lukas_custom_libraries/David_1/I_L1_1.fastq.gz"
 
 fastq_reader <- FastqStreamer(raw_path, n = 1000000)
 fastq_data <- yield(fastq_reader)
@@ -67,7 +72,7 @@ close(fastq_reader)
 
 # Extract sequences
 sequences <- sread(fastq_data)
-for (i in seq(1800, 1850, by = 5)) {
+for (i in seq(1600, 1650, by = 5)) {
   print(sequences[i:(i+4)])
 }
 freq_matrix <- consensusMatrix(sequences, as.prob = TRUE)
@@ -92,40 +97,70 @@ print("-----------------------------------")
 ## Loading
 If you are using the HD whole genome sgRNA library, in the load_tables block, simply specify which sub-libraries (if any) you wish to exclude in remove_these_sublibraries, and then run the block. 
 ```{r load_tables}
-remove_these_sublibraries = c("ICS_3","ICS_4","ICS_5","ICS_6") #Set sublibraries to be removed
 
+if (library_source == "six_sublib_whole_genome"){
+  remove_these_sublibraries = c("ICS_3","ICS_4","ICS_5","ICS_6") #Set sublibraries to be removed
 
-if (first_time == TRUE){
-  sgRNA_df <- read_excel("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s4.xlsx")  # Reads the first sheet by default
-  sgRNA_df_counts <- read_excel("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s6.xlsx")
-  
-  saveRDS(sgRNA_df, get_file_path(rds_output_folder, "sgRNA_df.rds"))
-  saveRDS(sgRNA_df_counts, get_file_path(rds_output_folder, "sgRNA_df_counts.rds"))
-  
-  #Keep only specific sublibraries
-  sgRNA_df <- sgRNA_df %>% filter(!(ics_sublib %in% remove_these_sublibraries) | is.na(ics_sublib))
-  sgRNA_df_counts <- sgRNA_df_counts %>% filter(!(sublib %in% remove_these_sublibraries))
-  sgRNA_df_counts <- sgRNA_df_counts %>%
-    distinct(sgRNA, .keep_all = TRUE)
-  
-  merged_sgRNA_df <- full_join(sgRNA_df, sgRNA_df_counts, by = c("sgrna_id" = "sgRNA"))
-  
-  # Check if there is anything that didn't have a match
-  unmatched_from_sgRNA_df <- merged_sgRNA_df %>% filter(is.na(count))
-  unmatched_from_sgRNA_df_counts <- merged_sgRNA_df %>% filter(is.na(seq))
-  if (nrow(unmatched_from_sgRNA_df) == 0 & nrow(unmatched_from_sgRNA_df_counts) == 0){
-    rm(unmatched_from_sgRNA_df)
-    rm(unmatched_from_sgRNA_df_counts)
+  if (first_time == TRUE){
+    sgRNA_df <- read_excel(six_sublib_whole_genome_file_path)  # Reads the first sheet by default
+    sgRNA_df_counts <- read_excel(six_sublib_whole_genome_counts_file_path)
+    
+    saveRDS(sgRNA_df, get_file_path(rds_output_folder, "sgRNA_df.rds"))
+    saveRDS(sgRNA_df_counts, get_file_path(rds_output_folder, "sgRNA_df_counts.rds"))
+    
+    #Keep only specific sublibraries
+    sgRNA_df <- sgRNA_df %>% filter(!(ics_sublib %in% remove_these_sublibraries) | is.na(ics_sublib))
+    sgRNA_df_counts <- sgRNA_df_counts %>% filter(!(sublib %in% remove_these_sublibraries))
+    sgRNA_df_counts <- sgRNA_df_counts %>%
+      distinct(sgRNA, .keep_all = TRUE)
+    
+    merged_sgRNA_df <- full_join(sgRNA_df, sgRNA_df_counts, by = c("sgrna_id" = "sgRNA"))
+    
+    # Check if there is anything that didn't have a match
+    unmatched_from_sgRNA_df <- merged_sgRNA_df %>% filter(is.na(count))
+    unmatched_from_sgRNA_df_counts <- merged_sgRNA_df %>% filter(is.na(seq))
+    if (nrow(unmatched_from_sgRNA_df) == 0 & nrow(unmatched_from_sgRNA_df_counts) == 0){
+      rm(unmatched_from_sgRNA_df)
+      rm(unmatched_from_sgRNA_df_counts)
+    }
+    
+    # Remove the two duplicate columns from the dataframe
+    merged_sgRNA_df <- merged_sgRNA_df %>% select(-ics_sublib)
+    
+    saveRDS(merged_sgRNA_df, get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
+  } else {
+    sgRNA_df <- readRDS(get_file_path(rds_output_folder, "sgRNA_df.rds"))
+    sgRNA_df_counts <- readRDS(get_file_path(rds_output_folder, "sgRNA_df_counts.rds"))
+    merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
   }
-  
-  # Remove the two duplicate columns from the dataframe
-  merged_sgRNA_df <- merged_sgRNA_df %>% select(-ics_sublib)
-  
-  saveRDS(merged_sgRNA_df, get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
-} else {
-  sgRNA_df <- readRDS(get_file_path(rds_output_folder, "sgRNA_df.rds"))
-  sgRNA_df_counts <- readRDS(get_file_path(rds_output_folder, "sgRNA_df_counts.rds"))
-  merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
+}
+
+if (library_source == "lukas_custom"){
+  if (first_time == TRUE){
+    merged_sgRNA_df <- read_excel(lukas_custom_file_path) %>% 
+      rename(Gene = gene,
+             seq = guide,
+             entrez = entrez_id
+             ) %>% 
+      mutate(sgrna_id = Gene,
+             chr = "chr?",
+             start = "start?",
+             end = "end?",
+             symbol = Gene,
+             count = 0,
+             src_lib = "lukas_custom",
+             sublib = "ICS_1")
+    
+    
+  merged_sgRNA_df <- merged_sgRNA_df %>%
+    group_by(sgrna_id) %>%
+    mutate(sgrna_id = if (n() > 1) paste0(sgrna_id, "_", row_number()) else sgrna_id) %>%
+    ungroup()
+    
+    saveRDS(merged_sgRNA_df, get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
+  } else {
+    merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
+  }
 }
 
 ```
@@ -134,9 +169,16 @@ if (first_time == TRUE){
 Generate the reference.fasta file, which will be used by STAR.
 
 ```{r make_reference_fasta, eval=FALSE}
-#add cassette 
-NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACC"))
+#add cassette
 
+if (library_source == "six_sublib_whole_genome"){
+  # Nico HepG2 screens  
+  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACC"))
+}
+if (library_source == "lukas_custom"){
+  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGA",barcode,"AACAGCATAGCAAGTTTAAA"))
+
+}
 build_ref_df = function(df) {
   ref_df <- df %>%
     mutate(seqname = sgrna_id,

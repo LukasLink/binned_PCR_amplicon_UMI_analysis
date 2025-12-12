@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J Combined_pipeline_sub_10     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
-#SBATCH -A lsteinme             # profile of the group                # sbatch --dependency=afterok:44629855 /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
-#SBATCH --mem 128g               # Total memory required for the job
+#SBATCH -J CP_David_2     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
+#SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
+#SBATCH --mem 128g               # Total memory required for the job #  --dependency=afterok:44983168
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 12                   # Number of CPUs
-#SBATCH -t 02:00:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 08:00:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/link/logs/log_Combined_pipeline_sub_10.out
-#SBATCH -e /g/steinmetz/link/logs//log_Combined_pipeline_sub_10.err
+#SBATCH -o /g/steinmetz/link/logs/log_CP_David_2.out
+#SBATCH -e /g/steinmetz/link/logs//log_CP_David_2.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -16,32 +16,34 @@
 ################################################################################
 
 # Input and output folder paths
-INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush_subsample/subsample_10/QC_filtered_subsampled/"
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush_subsample/subsample_10/"
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/David_1/"
+OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/David_1/"
+
 # Regex pattern for extracting UMIs
-# REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
+REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
 # Regex pattern for extracting Reads
-REGEX_PATTERN="^(?P<discard_1>.{0,4})(?P<umi_1>.{1})(?P<discard_2>TCTTGTGGAAAGGACGAAACACCG){e<=1}"
+#REGEX_PATTERN="^(?P<discard_1>.{0,4})(?P<umi_1>.{1})(?P<discard_2>TCTTGTGGAAAGGACGAAACACCG){e<=1}"
+
 # UMI-tools needs the UMIs to be removed from the reads and added to the Readname,
 # it does this by capturing the UMIs as "umi_1", "umi_2"" etc. and throws away 
 # everything captured by "discard_1", "discard_2", etc. 
 
 # STAR settings
-SJDB_OVERHANG=121 #This is the lenght read -1
-Genome_SA_index_N_Bases=9 #Calculated by Combined_pipline_support.rmd
+SJDB_OVERHANG=71 #This is the lenght read -1
+Genome_SA_index_N_Bases=8 #Calculated by Combined_pipline_support.rmd
 NUM_THREADS=10 # The number of Threads used by star, should NOT be higher than n set above. 
 MAX_MEM=100000000000 # The number of bytes available to STAR, should NOT be higher than mem set above
 
 # Skip Options
 # Decide if we want to skip read filtering or not (if yes will exclude UMIs below a certain number of reads)
-READS=true #if processing Reads, set all except Grouping, Filtering, deduplication to false
-SKIP_QC=false
-SKIP_UMI_EXTRACTION=false
+READS=false #if processing Reads, set all except Grouping, Filtering, deduplication to false
+SKIP_QC=true
+SKIP_UMI_EXTRACTION=true
 SKIP_GENOME_GENERATE=false
 SKIP_MAPPING=false
-SKIP_GROUPING=true
+SKIP_GROUPING=false
 SKIP_FILTERING=true
-SKIP_DEDUPLICATION=true
+SKIP_DEDUPLICATION=false
 SKIP_IDXSTATS=false
 ################################################################################
 # END OF USER OPTIONS
@@ -96,7 +98,7 @@ if [ "$SKIP_QC" != "true" ]; then
     for file in "$INPUT_FOLDER"/*.fastq.gz; do
         filename=$(basename "$file")
         sample_name="${filename%.fastq.gz}"
-        seqtk seq -q20 -Q20 -L100 -n N "$file" | gzip > "$QC_FILTERED/$filename"
+        seqtk seq -q20 -Q20 -L"$SJDB_OVERHANG" -n N "$file" | gzip > "$QC_FILTERED/$filename"
     done
     echo "Finished QC"
 else
