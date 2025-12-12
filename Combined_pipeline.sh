@@ -34,9 +34,10 @@ Genome_SA_index_N_Bases=8 #Calculated by Combined_pipline_support.rmd
 NUM_THREADS=10 # The number of Threads used by star, should NOT be higher than n set above. 
 MAX_MEM=100000000000 # The number of bytes available to STAR, should NOT be higher than mem set above
 
-# Skip Options
-# Decide if we want to skip read filtering or not (if yes will exclude UMIs below a certain number of reads)
+# Decide if we process UMIs (leave false) or reads (set to true)
 READS=false #if processing Reads, set all except Grouping, Filtering, deduplication to false
+
+# Skip Options
 SKIP_QC=true
 SKIP_UMI_EXTRACTION=true
 SKIP_GENOME_GENERATE=false
@@ -45,6 +46,12 @@ SKIP_GROUPING=false
 SKIP_FILTERING=true
 SKIP_DEDUPLICATION=false
 SKIP_IDXSTATS=false
+
+# Decide if intermediary files should be removed to free up storage space
+# particularly the large .tsv files can be removed if no read filtering is to be done. 
+CLEAN_INTERMEDIARIES=false
+CLEAN_TSVs=true # will automatically be set to true if CLEAN_INTERMEDIARIES is true. 
+
 ################################################################################
 # END OF USER OPTIONS
 ################################################################################
@@ -90,6 +97,7 @@ for f in "$INPUT_FOLDER"/*.txt.gz; do
 done
 
 if [ "$SKIP_QC" != "true" ]; then
+    echo "Starting QC"
     # Load modules
     module purge
     ml seqtk/1.3-GCC-11.2.0
@@ -106,6 +114,7 @@ else
 fi
 
 if [ "$SKIP_UMI_EXTRACTION" != "true" ]; then
+    echo "Starting UMI Extraction"
     # Load UMI-tools module
     module purge
     ml UMI-tools/1.1.2-foss-2021b-Python-3.9.6
@@ -123,6 +132,7 @@ else
 fi
 
 if [ "$SKIP_GENOME_GENERATE" != "true" ]; then
+    echo "Starting Genome Generation"
     # Load STAR module
     module purge
     ml STAR/2.7.11b-GCC-13.2.0
@@ -145,6 +155,7 @@ else
 fi
 
 if [ "$SKIP_MAPPING" != "true" ]; then
+    echo "Starting Mapping"
     # Map reads
     # Load STAR module
     module purge
@@ -169,23 +180,24 @@ else
 fi
 
 if [ "$SKIP_GROUPING" != "true" ]; then
-  # Group reads
-  module purge
-  ml UMI-tools/1.1.2-foss-2021b-Python-3.9.6
-  
-  for file in "$MAPPED"/*.bam; do
-      filename=$(basename "$file")
-      sample_name="${filename%_Aligned.sortedByCoord.out.bam}"
-      umi_tools group -I "$file" --method adjacency --log "$GROUPED/$sample_name.log" \
-                     --group-out "$GROUPED/$sample_name.tsv" --output-bam -S "$GROUPED/$sample_name.bam"
-  done
-  echo "Finished Grouping"
-  # Index grouped BAM files
-  module purge
-  ml SAMtools/1.21-GCC-13.3.0
-  for file in "$GROUPED"/*.bam; do
-      samtools index "$file"
-  done
+    echo "Starting Grouping (this will create some big .tsv files"
+    # Group reads
+    module purge
+    ml UMI-tools/1.1.2-foss-2021b-Python-3.9.6
+    
+    for file in "$MAPPED"/*.bam; do
+        filename=$(basename "$file")
+        sample_name="${filename%_Aligned.sortedByCoord.out.bam}"
+        umi_tools group -I "$file" --method adjacency --log "$GROUPED/$sample_name.log" \
+                       --group-out "$GROUPED/$sample_name.tsv" --output-bam -S "$GROUPED/$sample_name.bam"
+    done
+    echo "Finished Grouping"
+    # Index grouped BAM files
+    module purge
+    ml SAMtools/1.21-GCC-13.3.0
+    for file in "$GROUPED"/*.bam; do
+        samtools index "$file"
+    done
 else
     echo "Skipping GROUPING step as SKIP_GROUPING is set to true"
 fi
@@ -195,6 +207,7 @@ fi
 
 # If filtering is not skipped, proceed with filtering
 if [ "$SKIP_FILTERING" != "true" ]; then
+    echo "Starting Filtering based on custom threshold.tsv"
     # Load Picard module
     module purge
     ml picard/3.1.0-Java-17
@@ -227,36 +240,62 @@ else
 fi
 
 if [ "$SKIP_DEDUPLICATION" != "true" ]; then
-  # Deduplicate reads
-  module purge
-  ml UMI-tools/1.1.2-foss-2021b-Python-3.9.6
-  for file in "$DEDUP_SOURCE_DIR"/*.bam; do
-      filename=$(basename "$file")
-      sample_name="${filename%.bam}"
-      umi_tools dedup --stdin="$file" --log="$DEDUP/$sample_name.log" --output-stats="$DEDUP/$sample_name" \
-                     --method adjacency -S "$DEDUP/${sample_name}_dedup.bam"
-  done
-  echo "Finished Deduplication"
+    echo "Starting Deduplication"
+    # Deduplicate reads
+    module purge
+    ml UMI-tools/1.1.2-foss-2021b-Python-3.9.6
+    for file in "$DEDUP_SOURCE_DIR"/*.bam; do
+        filename=$(basename "$file")
+        sample_name="${filename%.bam}"
+        umi_tools dedup --stdin="$file" --log="$DEDUP/$sample_name.log" --output-stats="$DEDUP/$sample_name" \
+                       --method adjacency -S "$DEDUP/${sample_name}_dedup.bam"
+    done
+    echo "Finished Deduplication"
 else
     echo "Skipping DEDUPLICATION step as SKIP_DEDUPLICATION is set to true"
 fi
 
 if [ "$SKIP_IDXSTATS" != "true" ]; then
+    echo "Starting Indexing"
 
-  if [ "$READS" == "true" ]; then
-    INDEX_SOURCE_DIR="$MAPPED"
-  else
-    INDEX_SOURCE_DIR="$DEDUP"
-  fi
-  # Index deduplicated BAM files
-  module purge
-  ml SAMtools/1.21-GCC-13.3.0
-  for file in "$INDEX_SOURCE_DIR"/*.bam; do
-    filename=$(basename "$file" .bam)
-    samtools idxstats "$file" > "$INDEX_SOURCE_DIR/${filename}_idxstats.txt"
-  done
-  echo "Finished IDXSTATS"
+    if [ "$READS" == "true" ]; then
+      INDEX_SOURCE_DIR="$MAPPED"
+    else
+      INDEX_SOURCE_DIR="$DEDUP"
+    fi
+    # Index deduplicated BAM files
+    module purge
+    ml SAMtools/1.21-GCC-13.3.0
+    for file in "$INDEX_SOURCE_DIR"/*.bam; do
+      filename=$(basename "$file" .bam)
+      samtools idxstats "$file" > "$INDEX_SOURCE_DIR/${filename}_idxstats.txt"
+    done
+    echo "Finished IDXSTATS"
 else
     echo "Skipping IDXSTATS step as SKIP_IDXSTATS is set to true"
 fi
+
+if [ "$CLEAN_INTERMEDIARIES" == "true" ]; then
+    echo "Removing all intermediary files. This is not recommended unless you are certain everything will work first try!"
+    CLEAN_TSVs=true
+    rm -r "$QC_FILTERED" "$UMI_EXTRACTED" "$STAR_INDEX" "$GROUPED" "$READ_FILTERED"
+    
+    if [ "$READS" == "true" ]; then
+        rm -r "$DEDUP"
+    else
+        rm -r "$MAPPED"
+    fi
+        
+    echo "Finished removing all intermediary files."
+fi
+if [ "$CLEAN_TSVs" == "true" ]; then
+    echo "Removing the large .tsv files from the grouped folder. They are needed if you plan to do reads per UMI analysis!"
+
+    for file in "$GROUPED"/*.tsv; do
+        rm "$file"
+    done
+        
+    echo "Finished removing the large .tsv files."
+fi
+
 echo "Processing complete."
