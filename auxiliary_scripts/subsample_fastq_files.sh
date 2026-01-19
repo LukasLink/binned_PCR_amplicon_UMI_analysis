@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J subsample_fastq_files     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
+#SBATCH -J subsample_fastq_files_3     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
 #SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
 #SBATCH --mem 36g               # Total memory required for the job
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 1                   # Number of CPUs
-#SBATCH -t 04:30:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 07:00:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/link/logs/log_subsample_fastq_files.out
-#SBATCH -e /g/steinmetz/link/logs//log_subsample_fastq_files.err
+#SBATCH -o /g/steinmetz/link/logs/log_subsample_fastq_files_3.out
+#SBATCH -e /g/steinmetz/link/logs//log_subsample_fastq_files_3.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -15,8 +15,10 @@
 # USER OPTIONS - Adjust these as needed
 ################################################################################
 # Input and output folder paths
-INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/Dual_rep_quart_rush"
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/"
+# path to the master folder for this analysis example HepG2_dual_rep_PA
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
+# Path to where the ouput folder should be created, example Amplicon_barcode_analysis
+OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3"
 percentages=("90" "80" "70" "60" "50" "40" "30" "20" "10")
 
 ################################################################################
@@ -58,9 +60,10 @@ for percent in "${percentages[@]}"; do
     fi
     
     # Create QC_filtered_subsampled directory
-    QC_DIR="$SUBDIR/QC_filtered_subsampled"
+    QC_DIR="$SUBDIR/QC_filtered"
     mkdir -p "$QC_DIR"
-    echo "Subdirectories created successfully!"
+    now="$(date +"%T")"
+    echo "$now   Subdirectories created successfully!"
     
     # Subsample .fastq.gz or .txt.gz files in QC_filtered directory
     if [ -d "$INPUT_FOLDER/QC_filtered" ]; then
@@ -70,14 +73,20 @@ for percent in "${percentages[@]}"; do
 
                 # Use seqtk to randomly subsample the file and save it in the subsampled directory
                 seqtk sample -s"444" "$file" "$percent_decimal" | gzip > "$QC_DIR/$(basename "$file")"
-                echo "Percent: $percent, Decimal: $percent_decimal"
+                now="$(date +"%T")"
+                echo "$now   Percent: $percent, Decimal: $percent_decimal"
             # Check for .txt.gz files and subsample them
+                now="$(date +"%T")"
+                echo "$now   Subsampeling of file $file completed"
             else
-                echo "$file is not a .fastq.gz file and will not be subsampled"
+                now="$(date +"%T")"
+                echo "$now   $file is not a .fastq.gz file and will not be subsampled"
             fi
         done
     fi
-    echo "subsampled files created successfully!"
+    now="$(date +"%T")"
+    echo "$now   subsampled files created successfully!"
 done
-echo "All Done!"
+now="$(date +"%T")"
+echo "$now   All Done!"
 

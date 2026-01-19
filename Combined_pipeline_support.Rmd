@@ -26,9 +26,9 @@ conflicts_prefer(dplyr::select)
 # User Options
 ###############
 
-output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/David_1"
+output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/library"
 first_time <- TRUE
-library_source <- "lukas_custom" # can be lukas_custom or six_sublib_whole_genome
+library_source <- "six_sublib_whole_genome" # can be lukas_custom or six_sublib_whole_genome
 
 lukas_custom_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/lukas_custom_libraries/h_ves_endo_sgRNA_library_full_info.xlsx"
 six_sublib_whole_genome_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s4.xlsx"
@@ -64,7 +64,8 @@ rds_output_folder <- make_clean_dir(output_folder, "/rds/")
 ## Checking sequences to prepare for reference building
 Change the raw_path to the path where your fastq file is located, and then then run the read_raw block to have a look at your reads. This will also tell you the most common read length, which will be used for calculating SJDB_OVERHANG.
 ```{r read_raw, eval=FALSE}
-raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/lukas_custom_libraries/David_1/I_L1_1.fastq.gz"
+raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Liangfu_iBeer_2/Atto/I_L1_1.fastq.gz"
+# raw_path = "/g/steinmetz/STOCKS/Data/Assay/sequencing/2025/2025-12-21-222F7TMNX/222F7TMNX_LX_iBeer_round2_25s001568-1-1_Kaiser_lane1HCSSubset5CR12ndpositive_sequence.txt.gz"
 
 fastq_reader <- FastqStreamer(raw_path, n = 1000000)
 fastq_data <- yield(fastq_reader)
@@ -72,7 +73,7 @@ close(fastq_reader)
 
 # Extract sequences
 sequences <- sread(fastq_data)
-for (i in seq(1600, 1650, by = 5)) {
+for (i in seq(9900, 9950, by = 5)) {
   print(sequences[i:(i+4)])
 }
 freq_matrix <- consensusMatrix(sequences, as.prob = TRUE)
@@ -99,7 +100,7 @@ If you are using the HD whole genome sgRNA library, in the load_tables block, si
 ```{r load_tables}
 
 if (library_source == "six_sublib_whole_genome"){
-  remove_these_sublibraries = c("ICS_3","ICS_4","ICS_5","ICS_6") #Set sublibraries to be removed
+  remove_these_sublibraries = c("ICS_2","ICS_4","ICS_6") #Set sublibraries to be removed
 
   if (first_time == TRUE){
     sgRNA_df <- read_excel(six_sublib_whole_genome_file_path)  # Reads the first sheet by default
@@ -173,11 +174,14 @@ Generate the reference.fasta file, which will be used by STAR.
 
 if (library_source == "six_sublib_whole_genome"){
   # Nico HepG2 screens  
-  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACC"))
+  # NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACC"))
+  # Liangfu iBeer_2 screens
+  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("ggctttatatatcttgtggaaaggacgaaacaccg",seq, "gttttagagct"))
 }
 if (library_source == "lukas_custom"){
-  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGA",barcode,"AACAGCATAGCAAGTTTAAA"))
-
+  # NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGA",barcode,"AACAGCATAGCAAGTTTAAA"))
+  # David_endo
+  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("TACGATCGATGGTCCAGAGCTTTATATATCTTGTGCAAAGGGCGAAACACCG",seq))
 }
 build_ref_df = function(df) {
   ref_df <- df %>%

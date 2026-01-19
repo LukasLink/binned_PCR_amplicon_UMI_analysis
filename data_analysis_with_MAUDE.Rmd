@@ -30,35 +30,55 @@ conflicts_prefer(dplyr::slice)
 first_time      <- TRUE
 
 # Directories
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/David_1/"
-john_folder     <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/"
+# Mandatory output_folder
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Atto"
+#optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
-
+john_folder <- ""
 # If any files are to be skipped list their names here
 
-skip_list <- c()
+skip_list <- c() # individual files, example: c("I_L3_5", "U_L1_2")
+skip_list_sublib <- c() # entire sublibraries, example: c("L4","L5")
+skip_list_sample <- c() # entire sample numbers, example c("1", "24")
+# Warning: skipping entire sublibraries and sample numbers does not work for
+# non numeric samples, or samples >9999
 
 # Extra target list
 # If any of the controls should be considered targeting (example EGFP and AAVS1)
+# Nico HepG2 screen
 include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
+# include_controls_list <- c()
 
+# Only Specific controls
+# Liangfu wants only these controls to be used:
+# Liangfu iBeer Screen
+if (FALSE){
+  use_only_these_controls_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Liangfu_Non_targeting_sgRNA_list_Genomewide_Daniel Lib.csv"
+  use_only_these_controls_list <- read.csv(use_only_these_controls_path, header = FALSE, stringsAsFactors = FALSE)$V1
+}
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
-data_type           <- "umis"   # can be "reads" or "umis"
+data_type           <- "reads"   # can be "reads" or "umis"
 method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
-subsample_controls  <- TRUE     # bolean keeps 20% of control sgRNAs for reference.
+subsample_controls  <- FALSE     # bolean keeps 10% of control sgRNAs for reference.
+combine_samples     <- "sample" # can be "", "sample", or "sublib".
+
 
 # Set Fractions for the upper and lower bins
 upper_lower_percentage <- 0.10  # Fraction of the lower&upper bin 0.10 = 10%
                                 # The Rest is used and removed by MAUDE for normalization.
 
 # Custom suffix and optional simplified read filtering
-extra_suffix  <- ""   # custom sufix, special behaviour when set to "rf"
+extra_suffix  <- "rep8"   # custom sufix, special behaviour when set to "rf"
                       # if extra_suffix is set to "rf" it applies simplified read filtering,  
                       # which removes all reads below simplified_rf_threshold
-simplified_rf_threshold <- 1000 # threshold for simplified filtering
+                      # "cf" does the same only for control guides
+simplified_rf_threshold <- 2000 # threshold for simplified filtering
+simplified_cf_threshold <- 2000 # threshold for simplified filtering
 
 # Are all the non-targeting control sgRNAS the same in all sublibraries/replicates?
 same_controls_in_all_sublibraries <- TRUE
@@ -190,6 +210,55 @@ if (min_guides_per_gene > 0){
 } else {
   min_guides_per_gene_suffix <- ""
 }
+if (combine_samples == ""){
+  combine_samples_suffix <- ""
+} else {
+  combine_samples_suffix <- paste0("comb_", combine_samples)
+}
+#===============================================================================
+# Construct the skip list
+#===============================================================================
+# WARNING, this is a weird hot fix that does not work properly for non numeric samples
+
+create_skip_list_and_suffix <- function(skip_list, skip_list_sublib, skip_list_sample){
+  skip_suffix <- ""
+  
+  bin <- c("I","L","U")
+
+  # Z variants: 1..999 plus 01..99 and 001..999 (all as strings)
+  possible_sample_numbers <- unique(c(
+    as.character(1:999),
+    sprintf("%02d", 1:999),
+    sprintf("%03d", 1:999)
+  ))
+  
+  if (length(skip_list_sublib) > 0) {
+    df <- expand.grid(bin = bin, sublib = skip_list_sublib, sample = possible_sample_numbers, stringsAsFactors = FALSE)
+    skip_list <- c(skip_list, paste(df$bin, df$sublib, df$sample, sep = "_"))
+    skip_suffix <- paste0(skip_suffix, "no_sublib_", paste0(skip_list_sublib, collapse = "_"))
+  }
+  if (length(skip_list_sample) > 0) {
+    if (length(skip_list_sublib) > 0) {
+      skip_suffix <- paste0(skip_suffix, "_")
+    }
+    possible_sublib_numbers <- unique(c(
+      paste0("L", 1:999),
+      paste0("L", sprintf("%02d", 1:999)),
+      paste0("L", sprintf("%03d", 1:999))
+    ))
+    df <- expand.grid(bin = bin, sublib = possible_sublib_numbers, sample = skip_list_sample, stringsAsFactors = FALSE)
+    skip_list <- c(skip_list, paste(df$bin, df$sublib, df$sample, sep = "_"))
+    skip_suffix <- paste0(skip_suffix, "no_sample_", paste0(skip_list_sample, collapse = "_"))
+  }
+  skip_list <- unique(skip_list)
+  return(list(skip_list, skip_suffix))
+}
+skip_list_and_suffix <- create_skip_list_and_suffix(skip_list,
+                                                    skip_list_sublib,
+                                                    skip_list_sample)
+skip_list <- skip_list_and_suffix[[1]]
+skip_suffix <- skip_list_and_suffix[[2]]
+
 #===============================================================================
 # Construct the file suffix
 #===============================================================================
@@ -201,7 +270,9 @@ fs_parts <- c(pipeline,
            drop_0s_suffix,
            strict_mode_suffix,
            min_guides_per_gene_suffix,
+           combine_samples_suffix,
            auto_combine_replicates_suffix,
+           skip_suffix,
            extra_suffix)
 
 # keep only non-empty parts
@@ -217,7 +288,9 @@ fi_parts <- c(pipeline,
               drop_0s_suffix,
               strict_mode_suffix,
               min_guides_per_gene_suffix,
+              combine_samples_suffix,
               auto_combine_replicates_suffix,
+              skip_suffix,
               extra_suffix)
 
 # keep only non-empty parts
@@ -370,7 +443,7 @@ read_file_to_df <- function(file_name,
 
 process_folder_files <- function(folder_path,
                                  threshold_df = NULL,
-                                 skip_list = c("L_L4_3","U_L4_3"),
+                                 skip_list = c(),
                                  check_alignments = TRUE){
   
   data_type <- get("data_type", envir = .GlobalEnv)
@@ -407,14 +480,17 @@ process_folder_files <- function(folder_path,
       suffix_to_remove <- "_dedup_idxstats.txt"
     }
     if (data_type == "reads"){
-      name <- sub("_Aligned.sortedByCoord.out_idxstats","",file_name)
+      name <- sub("_Aligned.sortedByCoord.out_idxstats.txt","",file_name)
       # Extract condition (X), sublib (L#), and sample (#) using regex
       matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
       suffix_to_remove <- "_Aligned.sortedByCoord.out_idxstats.txt"
     }
     
     # Skip entries from skip list
-    if (name %in% skip_list){return(NULL)}
+    if (name %in% skip_list){
+      print(paste(name, "skipped due to skip list"))
+      return(NULL)
+      }
     
     if (is.na(matches[1])) {
       stop(paste("Filename does not match expected pattern:", file_name))
@@ -802,11 +878,30 @@ if (pipeline == "john"){
     }
   }  
 }
+
+if (extra_suffix == "cf"){
+  count_df_long <- count_df_long %>%
+    filter(!(group != "targeting" & count < simplified_cf_threshold))
+}
+
+# Extend the include_controls_list if use_only_these_controls_list is given
+if (exists("use_only_these_controls_list")) {
+  if (length(use_only_these_controls_list) > 0){
+    # list of sgRNAs that were not targeting (before) and not in allowed controls
+    excluded_controls <- count_df_long %>%
+      filter(group_category != "targeting", !sgRNA %in% use_only_these_controls_list) %>%
+      distinct(sgRNA) %>%
+      pull(sgRNA)
+  
+    include_controls_list <- c(include_controls_list, excluded_controls)
+  }
+}
 if (length(include_controls_list) > 0){
   for (control_gene in include_controls_list){
     count_df_long$group_category[grepl(control_gene, count_df_long$sgRNA)] <- "targeting"
   }
 }
+
 ```
 
 
@@ -1102,7 +1197,7 @@ generate_all_violin_plots_and_summaries <- function(df,
     }
   }
 }
-generate_all_violin_plots_and_summaries(count_df_long, y_limit = 12000, non_targeting = TRUE)
+generate_all_violin_plots_and_summaries(count_df_long, y_limit = 8000, non_targeting = TRUE)
 generate_all_violin_plots_and_summaries(count_df_long, norm_method = "control_median", y_limit = 8000, non_targeting = TRUE) 
 
 
@@ -1289,7 +1384,8 @@ if (norm_method == "control_median"){
   count_df_long <- normalize_count_df_long(count_df_long,
                                            norm_method = norm_method)
 }
-  
+
+
   
 maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
                                          print = FALSE,
@@ -1355,6 +1451,53 @@ if (length(include_controls_list) > 0) {
     maude_counts_df$isNontargeting[grepl(control_gene, maude_counts_df$sgRNA)] <- FALSE
   }
 }
+if (exists("use_only_these_controls_list")) {
+  if (length(use_only_these_controls_list) > 0){
+    maude_counts_df$isNontargeting[ !(maude_counts_df$sgRNA %in% use_only_these_controls_list) ] <- FALSE
+  }
+}
+if (combine_samples != ""){
+  if (combine_samples == "sample"){
+    maude_counts_df <- maude_counts_df %>%
+      group_by(sgRNA, sublib) %>%
+      summarise(
+        # set sample name for the combined rows
+        sample = "sample_1",
+        
+        # add up integer count columns
+        input = sum(input, na.rm = TRUE),
+        lower = sum(lower, na.rm = TRUE),
+        upper = sum(upper, na.rm = TRUE),
+        
+        # keep the first value for everything else
+        exp = dplyr::first(exp),
+        isNontargeting = dplyr::first(isNontargeting),
+        
+        # keep one sublib/sgRNA (also fine even though they're grouping keys)
+        .groups = "drop"
+      )
+  }
+  if (combine_samples == "sublib"){
+    maude_counts_df <- maude_counts_df %>%
+      group_by(sgRNA, sample) %>%
+      summarise(
+        # set sample name for the combined rows
+        sublib = "sublib_1",
+        
+        # add up integer count columns
+        input = sum(input, na.rm = TRUE),
+        lower = sum(lower, na.rm = TRUE),
+        upper = sum(upper, na.rm = TRUE),
+        
+        # keep the first value for everything else
+        exp = dplyr::first(exp),
+        isNontargeting = dplyr::first(isNontargeting),
+        
+        # keep one sublib/sgRNA (also fine even though they're grouping keys)
+        .groups = "drop"
+      )    
+  }
+}  
 ```
 
 ## Exploration of the read/umi counts in MAUDE format
@@ -1704,6 +1847,7 @@ if (first_time == TRUE){
       maude_guide_stats$entrez[grepl(control_gene, maude_guide_stats$sgRNA)] <- control_gene
     }
   }
+ 
   ## calculate gene-level summarized scores
   maude_gene_stats <- getElementwiseStats(
     experiments = unique(maude_guide_stats['exp']),

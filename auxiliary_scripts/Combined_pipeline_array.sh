@@ -1,15 +1,29 @@
 #!/bin/bash
-#SBATCH -J CP_%A_2_80    # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
-#SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
+#SBATCH -J CP_array_1     # Job Name                # chmod +x ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/Combined_pipeline_array.sh
+#SBATCH -A lsteinme             # profile of the group                # sbatch ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/Combined_pipeline_array.sh
 #SBATCH --mem 128g               # Total memory required for the job #  --dependency=afterok:46151850
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 12                   # Number of CPUs
-#SBATCH -t 02:30:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 02:15:00             # Runtime until the job is forcefully canceled
+#SBATCH --array=0-8
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/link/logs/log_%A_CP_2_80.out
-#SBATCH -e /g/steinmetz/link/logs//log_%A_CP_2_80.err
+#SBATCH -o /g/steinmetz/link/logs/CP_array_%A_%a.out
+#SBATCH -e /g/steinmetz/link/logs/CP_array_%A_%a.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
+
+# Array Options
+################################################################################
+percentages=("90" "80" "70" "60" "50" "40" "30" "20" "10")
+
+i=${SLURM_ARRAY_TASK_ID}          # typically 0..8 if you have 9 entries
+pct=${percentages[$i]}            # e.g. "90"
+
+OUTPUT_FOLDER_ROOT="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1/HepG2_dual_rep_PA_subsample"
+OUTPUT_FOLDER="${OUTPUT_FOLDER_ROOT}/subsample_${pct}"
+
+echo "Task $i -> ${OUTPUT_FOLDER}"
+################################################################################
 
 ################################################################################
 # USER OPTIONS - Adjust these as needed
@@ -17,14 +31,14 @@
 
 # Input and output folder paths
 INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Liangfu_iBeer_2/Atto/"
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/2/HepG2_dual_rep_PA_subsample/subsample_80"
+# OUTPUT_FOLDER_ROOT="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3/HepG2_dual_rep_PA_subsample/subsample_10"
 
 # Regex pattern for extracting UMIs
 #REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
 # Regex pattern for extracting Reads
 REGEX_PATTERN="^(?P<discard_1>.{0,4})(?P<umi_1>.{1})(?P<discard_2>TCTTGTGGAAAGGACGAAACACCG){e<=1}"
 
-# UMI-tools needs the UMIs to be removed from the reads and added to the Readname,
+# UMI-tools needs the UMIs to be removed from the reads and added to the Readname,s
 # it does this by capturing the UMIs as "umi_1", "umi_2"" etc. and throws away 
 # everything captured by "discard_1", "discard_2", etc. 
 
