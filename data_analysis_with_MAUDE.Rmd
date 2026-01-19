@@ -73,7 +73,7 @@ upper_lower_percentage <- 0.10  # Fraction of the lower&upper bin 0.10 = 10%
                                 # The Rest is used and removed by MAUDE for normalization.
 
 # Custom suffix and optional simplified read filtering
-extra_suffix  <- "rep8"   # custom sufix, special behaviour when set to "rf"
+extra_suffix  <- ""   # custom sufix, special behaviour when set to "rf"
                       # if extra_suffix is set to "rf" it applies simplified read filtering,  
                       # which removes all reads below simplified_rf_threshold
                       # "cf" does the same only for control guides

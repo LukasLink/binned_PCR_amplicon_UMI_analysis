@@ -31,8 +31,8 @@ first_time      <- TRUE
 
 # Directories
 # Mandatory output_folder
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/COR"
 
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -48,6 +48,7 @@ skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # Extra target list
 # If any of the controls should be considered targeting (example EGFP and AAVS1)
 include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
+include_controls_list <- c()
 
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
@@ -2325,6 +2326,91 @@ if (FALSE){
 }
  
 automate_subsample_comparison(FDR_threshold = 0.05)
+```
+``` {r control_distribution_heatmap, eval=TRUE}
+library(pheatmap)
+library(grid)
+# 1) Add RPM per (condition, sublib, sample)
+count_df_long2 <- count_df_long %>%
+  group_by(condition, sublib, sample) %>%
+  mutate(RPM = (count / sum(count)) * 1e6) %>%
+  ungroup()
+
+# 2) Remove targeting guides (not relevant for heatmap)
+count_df_long2 <- count_df_long2 %>%
+  filter(group_category != "targeting")
+
+# 3) Make a column ID for the heatmap columns
+count_df_long2 <- count_df_long2 %>%
+  mutate(col_id = paste(condition, sublib, sample, sep = "_"))
+
+# 4) Ensure 1 RPM value per (sgRNA, col_id)
+#    (If there are duplicates, sum them — or you could use mean)
+heatmap_df <- count_df_long2 %>%
+  group_by(sgRNA, col_id) %>%
+  summarise(RPM = sum(RPM), .groups = "drop")
+
+# 5) Pivot to wide format for heatmap input
+heatmap_wide <- heatmap_df %>%
+  pivot_wider(names_from = col_id, values_from = RPM, values_fill = 0) %>%
+  arrange(sgRNA)
+
+# 6) Convert to matrix with sgRNA as rownames
+heatmap_mat <- as.matrix(heatmap_wide[, -1])
+rownames(heatmap_mat) <- heatmap_wide$sgRNA
+
+chunk_size <- 60
+
+# (optional) order rows by variance so "interesting" ones appear first
+row_var <- apply(heatmap_mat, 1, var)
+heatmap_mat <- heatmap_mat[order(row_var, decreasing = TRUE), , drop = FALSE]
+
+# split row indices into chunks of 50
+idx_list <- split(seq_len(nrow(heatmap_mat)),
+                  ceiling(seq_len(nrow(heatmap_mat)) / chunk_size))
+
+# list of matrices, each with up to 50 rows
+heatmap_chunks <- lapply(idx_list, function(idx) heatmap_mat[idx, , drop = FALSE])
+
+for (k in seq_along(heatmap_chunks)) {
+  row_start <- min(idx_list[[k]])
+  row_end   <- max(idx_list[[k]])
+
+  pheatmap(
+    heatmap_chunks[[k]],
+    scale = "none",
+    fontsize_row = 6,
+    main = paste0("Heatmap ", k, " (rows ", row_start, "–", row_end, ")")
+  )
+}
+
+pdf_file <- get_file_path(output_folder, "heatmaps_chunks_60rows.pdf")
+
+grDevices::pdf(pdf_file, width = 10, height = 18, onefile = TRUE)
+pdf_dev <- grDevices::dev.cur()   # <- store the pdf device id
+
+for (k in seq_along(heatmap_chunks)) {
+
+  row_start <- min(idx_list[[k]])
+  row_end   <- max(idx_list[[k]])
+
+  ph <- pheatmap(
+    heatmap_chunks[[k]],
+    scale = "none",
+    main = paste0("Heatmap ", k, " (rows ", row_start, "–", row_end, ")"),
+    fontsize_row = 6,
+    silent = TRUE
+  )
+
+  grDevices::dev.set(pdf_dev)     # <- force drawing into the PDF device
+  grid::grid.newpage()
+  grid::grid.draw(ph$gtable)
+
+  invisible(ph)                  # <- prevents knitr from printing it
+}
+
+grDevices::dev.off()
+
 ```
 
 ``` {r Manhattan_plot, eval=False}
