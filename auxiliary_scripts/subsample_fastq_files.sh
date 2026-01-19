@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J subsample_fastq_files_3     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
+#SBATCH -J subsample_fastq_files_1     # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
 #SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/subsample_fastq_files.sh
 #SBATCH --mem 36g               # Total memory required for the job
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 1                   # Number of CPUs
 #SBATCH -t 07:00:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/link/logs/log_subsample_fastq_files_3.out
-#SBATCH -e /g/steinmetz/link/logs//log_subsample_fastq_files_3.err
+#SBATCH -o /g/steinmetz/link/logs/log_subsample_fastq_files_1.out
+#SBATCH -e /g/steinmetz/link/logs//log_subsample_fastq_files_1.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -18,7 +18,7 @@
 # path to the master folder for this analysis example HepG2_dual_rep_PA
 INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
 # Path to where the ouput folder should be created, example Amplicon_barcode_analysis
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3"
+OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1"
 percentages=("90" "80" "70" "60" "50" "40" "30" "20" "10")
 
 ################################################################################
@@ -72,7 +72,7 @@ for percent in "${percentages[@]}"; do
             if [[ "$file" == *.fastq.gz ]]; then
 
                 # Use seqtk to randomly subsample the file and save it in the subsampled directory
-                seqtk sample -s"444" "$file" "$percent_decimal" | gzip > "$QC_DIR/$(basename "$file")"
+                seqtk sample "$file" "$percent_decimal" | gzip > "$QC_DIR/$(basename "$file")"
                 now="$(date +"%T")"
                 echo "$now   Percent: $percent, Decimal: $percent_decimal"
             # Check for .txt.gz files and subsample them

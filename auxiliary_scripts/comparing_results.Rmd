@@ -32,7 +32,7 @@ first_time      <- TRUE
 # Directories
 # Mandatory output_folder
 output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
 
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -1914,17 +1914,67 @@ plot_overlap <- function(df, title, comparing = "") {
         axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
       )  
   }
-  if (comparing == "subsamples"){
-    p <- ggplot(df, aes(x = Name)) +
-      geom_line(aes(y = Overlap_percentage), size = 1) + 
-      geom_point(aes(y = Overlap_percentage), size = 3) +
-      labs(
-        title = paste("Percentage of correct Hits for",title),
-        x = "Subsample Percentage",
-        y = "Overlap Percentage"
-      ) +
-      theme_bw()
+  if (comparing == "subsamples") {
+  
+    # Extract trailing number from tags like "A25" / "subX10" / "25"
+    df$Number <- as.integer(sub("^\\D*([0-9]+)$", "\\1", df$Name))
+  
+    # Safety check (optional)
+    if (any(is.na(df$Number))) {
+      stop("Some 'Name' entries do not end in a number (cannot extract Number).")
+    }
+  
+    # Sort by numeric value so the line goes left -> right correctly
+    df <- df[order(df$Number), ]
+  
+    if (anyDuplicated(df$Number) == 0) {
+      # mbers are unique → simple plot
+      p <- ggplot(df, aes(x = Number)) +
+        geom_line(aes(y = Overlap_percentage), size = 1, group = 1) +
+        geom_point(aes(y = Overlap_percentage), size = 3) +
+        labs(
+          title = paste("Percentage of correct Hits for", title),
+          x = "Subsample Percentage",
+          y = "Overlap Percentage"
+        ) +
+        theme_bw()
+  
+    } else {
+      # Numbers NOT unique → plot mean per Number + error bars
+  
+      # Summarise mean + SE (swap to sd if you prefer)
+      tmp <- split(df$Overlap_percentage, df$Number)
+      df_sum <- data.frame(
+        Number = as.integer(names(tmp)),
+        mean   = sapply(tmp, mean),
+        sd     = sapply(tmp, sd),
+        n      = sapply(tmp, length)
+      )
+  
+      df_sum$se <- df_sum$sd / sqrt(df_sum$n)
+      df_sum$se[is.na(df_sum$se)] <- 0  # happens when n=1 (sd=NA)
+  
+      df_sum <- df_sum[order(df_sum$Number), ]
+  
+      p <- ggplot(df_sum, aes(x = Number)) +
+        geom_line(aes(y = mean), size = 1, group = 1) +
+        geom_point(aes(y = mean), size = 3) +
+        geom_errorbar(
+          aes(ymin = mean - se, ymax = mean + se),
+          width = 0.2
+        ) +
+        labs(
+          title = paste("Percentage of correct Hits with SE for", title),
+          x = "Subsample Percentage",
+          y = "Overlap Percentage"
+        ) +
+        theme_bw()
+  
+      # Optional: show the individual points too (nice for debugging)
+      # p <- p + geom_point(data = df, aes(x = Number, y = Overlap_percentage), alpha = 0.4)
+    }
   }
+
   return(p)
 }
 
@@ -2004,12 +2054,19 @@ compare_df_list <- function(df_list,
 
 ``` {r compare_subsamples_functions, eval=TRUE}
 move_subsamples <- function(subsample_master_dir,
+                            subsample_prefix = "",
                             output_folder = get("rds_output_folder",
                                                 envir = .GlobalEnv),
                             file_info_suffix = get("file_info_suffix",
                                                    envir = .GlobalEnv)) {
   
   # Basic checks
+  if (subsample_prefix != ""){
+    is_alpha_only <- function(x) grepl("^[A-Za-z]+$", x)
+    if (!is_alpha_only(subsample_prefix)){
+      stop("subsample prefix can only contain alphatbetic characters: ",subsample_prefix)
+    }
+  }
   if (!dir.exists(subsample_master_dir)) {
     stop("subsample_master_dir does not exist: ", subsample_master_dir)
   }
@@ -2053,7 +2110,7 @@ move_subsamples <- function(subsample_master_dir,
     } 
     for (file in files) {
       base <- basename(file) # e.g. "something_suffix.rds"
-      new_base <- sub("\\.rds$", paste0("_subsample", X, ".rds"), base)
+      new_base <- sub("\\.rds$", paste0("_subsample_", subsample_prefix, X, ".rds"), base)
       dest <- file.path(output_folder, new_base)
       
       ok <- file.copy(from = file, to = dest, overwrite = TRUE)
@@ -2074,42 +2131,51 @@ move_subsamples <- function(subsample_master_dir,
 }
 
 
-automate_subsample_comparison <- function(prefixstring = get("file_info_suffix",
+automate_subsample_comparison <- function(file_info_prefix = get("file_info_suffix",
                                                              envir = .GlobalEnv),
                                           FDR_threshold = 0.05) {
   # Get the current settings from the global environment
   if(exists("Hits_current_settings")){
     Hits_current_settings <- get("Hits_current_settings", envir = .GlobalEnv)
   } else {
-    Hits_current_settings <- add_info_wrapper(prefixstring)
+    Hits_current_settings <- add_info_wrapper(file_info_prefix)
   }
   
   rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)
   
-  # List all files in the rds output folder
-  rds_files <- list.files(rds_output_folder, pattern = paste0(".*",
-                                                              prefixstring,
-                                                              "_subsample[0-9]+\\.rds$"),
-                          full.names = TRUE)
+  # 1) list files (now expecting subsample_<letters><digits>.rds)
+  rds_files <- list.files(
+    rds_output_folder,
+    pattern = paste0(".*", file_info_prefix, "_subsample_[A-Za-z]+[0-9]+\\.rds$"),
+    full.names = TRUE
+  )
   
-  # Extract the numbers from the file names (e.g., "lukas_reads_control_median_RI_25.rds" -> 25)
-  numbers <- as.numeric(gsub(paste0(".*",
-                                    prefixstring,
-                                    "_subsample([0-9]+)\\.rds$"),
-                             "\\1",
-                             rds_files))
+  # 2) extract the combined prefix+number part (e.g. "A25" from lukas_reads_control_median_RI_subsample_A25.rds)
+  subsample_tag <- sub(
+    paste0(".*", file_info_prefix, "_subsample_([A-Za-z]+[0-9]+)\\.rds$"),
+    "\\1",
+    basename(rds_files)
+  )
+  subsample_tag_unique <- unique(subsample_tag)
+  # 4) split into prefixes and numbers
+  prefixes <- sub("^([A-Za-z]+)[0-9]+$", "\\1", subsample_tag_unique)
+  numbers  <- as.integer(sub("^[A-Za-z]+([0-9]+)$", "\\1", subsample_tag_unique))
   
   # Generate the percentage list (starting from 100 and then descending from the available numbers)
-  percentage_list <- sort(numbers, decreasing = TRUE)
-  percentage_list <- unique(percentage_list)
+  tag_df <- data.frame(prefix = prefixes,
+                   number = numbers,
+                   tag = subsample_tag_unique,
+                   stringsAsFactors = FALSE)
+
+  tag_df <- tag_df[order(tag_df$number, decreasing = TRUE), ]
   # Generate Hits_sub_x using add_info_wrapper for each percentage in percentage_list
-  df_list <- lapply(percentage_list, function(perc) {
-    add_info_wrapper(paste0(prefixstring, "_subsample", perc))
+  df_list <- lapply(tag_df$tag, function(tag) {
+    add_info_wrapper(paste0(file_info_prefix, "_subsample_", tag))
   })
   print(length(df_list))
   # Call compare_df_list with the generated df_list and percentage_list
   result <- compare_df_list(df_list = c(list(Hits_current_settings), df_list),
-                            name_list = c(100, percentage_list),
+                            name_list = c(100, tag_df$tag),
                             FDR_threshold = FDR_threshold,
                             comparing = "subsamples",
                             top_N = NULL)
@@ -2252,7 +2318,10 @@ test <- automate_sublibrary_comparison(FDR_threshold = 0.05)
 if (FALSE){
   # run this once to move subsamples from the target dir, to the rds dir
   # of the current output folder
-  move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample")
+  move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1/HepG2_dual_rep_PA_subsample", subsample_prefix = "A")
+  move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/2/HepG2_dual_rep_PA_subsample", subsample_prefix = "B")
+  move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3/HepG2_dual_rep_PA_subsample", subsample_prefix = "C")
+  move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/4/HepG2_dual_rep_PA_subsample", subsample_prefix = "D")
 }
  
 automate_subsample_comparison(FDR_threshold = 0.05)
