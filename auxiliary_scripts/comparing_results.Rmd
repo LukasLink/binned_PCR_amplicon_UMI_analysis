@@ -31,7 +31,7 @@ first_time      <- TRUE
 
 # Directories
 # Mandatory output_folder
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/COR"
 
 #optional folders for results from johns bcwithqc
@@ -318,7 +318,7 @@ genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
 mapped_output_folder <- make_clean_dir(output_folder, "/mapped/")
 rds_output_folder <- make_clean_dir(output_folder, "/rds/")
-
+results_output_folder <- make_clean_dir(output_folder, "/results/")
 
 merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
                                          "merged_sgRNA_df.rds"))
@@ -2303,7 +2303,7 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
 ``` {r Calculated_replicated_analysis, eval=False}
 calc_rep_analysis <- automate_calc_replicate_comparison(FDR_threshold = 0.01)
 
-excel_file_path <- sub("\\.rds$", ".xlsx", paste0(output_folder, "/", "Hits_in_all_runs_", file_suffix))
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_in_all_runs_", file_suffix))
 write_xlsx(calc_rep_analysis$Hits_in_X_df, excel_file_path)
 ```
 ## Compare Sublibraries 
@@ -2384,7 +2384,7 @@ for (k in seq_along(heatmap_chunks)) {
   )
 }
 
-pdf_file <- get_file_path(output_folder, "heatmaps_chunks_60rows.pdf")
+pdf_file <- get_file_path(results_output_folder, "heatmaps_chunks_60rows.pdf")
 
 grDevices::pdf(pdf_file, width = 10, height = 18, onefile = TRUE)
 pdf_dev <- grDevices::dev.cur()   # <- store the pdf device id
@@ -2410,6 +2410,7 @@ for (k in seq_along(heatmap_chunks)) {
 }
 
 grDevices::dev.off()
+
 
 ```
 

@@ -27,7 +27,7 @@ conflicts_prefer(dplyr::slice)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- TRUE
+first_time      <- FALSE
 
 # Directories
 # Mandatory output_folder
@@ -1021,7 +1021,7 @@ add_star_log_stats <- function(df, mapped_output_folder) {
     }
 
     vals <- vapply(names(metrics_map), extract_value, numeric(1))
-    names(vals) <- unname(metrics_map)
+    names(vals) <- base::unname(metrics_map)
 
     as.data.frame(as.list(vals), stringsAsFactors = FALSE)
   }
@@ -1038,13 +1038,51 @@ add_star_log_stats <- function(df, mapped_output_folder) {
 
 df_cov <- parse_coverage_file(get_file_path(
   rds_output_folder, paste0(file_info_suffix, "_coverage.txt")
-  ))
-mapping_results_df <- add_star_log_stats(df_cov, mapped_output_folder)
-write_xlsx(mapping_results_df, get_file_path(
-  results_output_folder, paste0(file_info_suffix, "_mapping_results.xlsx")
 ))
 
+mapping_results_df <- add_star_log_stats(df_cov, mapped_output_folder)
+
 rm(df_cov)
+
+overall_targeting <- count_df_long %>%
+  summarise(
+    total_counts     = sum(count, na.rm = TRUE),
+    targeting_counts = sum(count[group_category == "targeting"], na.rm = TRUE),
+    targeting_perc   = 100 * targeting_counts / total_counts
+  ) %>%
+  mutate(targeting_perc = sprintf("%.2f%%", targeting_perc))
+
+targeting_by_group <- count_df_long %>%
+  group_by(condition, sublib, sample) %>%
+  summarise(
+    total_counts     = sum(count, na.rm = TRUE),
+    targeting_counts = sum(count[group_category == "targeting"], na.rm = TRUE),
+    targeting_perc   = 100 * targeting_counts / total_counts,
+    .groups = "drop"
+  ) %>%
+  mutate(targeting_perc = sprintf("%.2f%%", targeting_perc))
+
+overall_targeting_merged <- merged_sgRNA_df %>%
+  summarise(
+    total_counts     = sum(count, na.rm = TRUE),
+    targeting_counts = sum(count[!is.na(entrez)], na.rm = TRUE),
+    targeting_perc   = 100 * targeting_counts / total_counts
+  ) %>%
+  mutate(targeting_perc = sprintf("%.2f%%", targeting_perc))
+
+
+# ---- Write everything into ONE excel file as separate sheets ----
+write_xlsx(
+  list(
+    mapping_results          = mapping_results_df,
+    overall_targeting        = overall_targeting,
+    targeting_by_group       = targeting_by_group,
+    overall_targeting_reference = overall_targeting_merged
+  ),
+  get_file_path(results_output_folder,
+                paste0(file_info_suffix, "_mapping_results.xlsx"))
+)
+
 ```
 ## More detailed data exploration based on the long format read/umi counts 
 Run this to check the plots
@@ -2040,6 +2078,17 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
   export_df <- maude_gene_stats %>% 
     select(c(symbol, entrez, numGuides,stoufferZ,meanZ,significanceZ,p.value, FDR, seq, sgRNA)) %>% 
     arrange(significanceZ)
+  
+  HepG2_tpm <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
+  
+  export_df <- export_df %>%
+  left_join(
+    HepG2_tpm %>%
+      filter(!is.na(entrez_id)) %>%
+      select(entrez_id, HepG2_TPM = HepG2, primary_hepato_TPM = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  
   return(export_df)
 }
 
