@@ -1117,6 +1117,30 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
   export_df <- maude_gene_stats %>% 
     select(c(symbol, entrez, numGuides,stoufferZ,meanZ,significanceZ,p.value, FDR, seq, sgRNA)) %>% 
     arrange(significanceZ)
+  # Add Liangfus expression data
+  HepG2_tpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
+  
+  export_df <- export_df %>%
+  left_join(
+    HepG2_tpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      select(entrez_id, HepG2_TPM_Xie = HepG2, primary_hepato_TPM_Xie = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  
+  # Add Nicos HepG2 RNAseq expression data
+  HepG2_tpm_Battisti <- readRDS("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
+    export_df <- export_df %>%
+      left_join(
+        HepG2_tpm_Battisti %>%
+          filter(!is.na(entrez)) %>%
+          select(entrez,
+                 HepG2_TPM_Battisti = TPM_WT,
+                 HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
+                 HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
+        by = "entrez"
+      )
+  
   return(export_df)
 }
 
@@ -2274,7 +2298,6 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
     basename(rds_files)
   )
   rep_name_long <- paste0("calc_rep_", rep_name)
-  rep_name_long <- unique(rep_name_long)
   rep_suffixes <- paste0(file_info_suffix, "_rep", rep_name)
   rep_suffixes <- unique(rep_suffixes)
   # Generate Hits_df_list using add_info_wrapper for each sublib_suffixes
@@ -2301,9 +2324,12 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
 ```
 
 ``` {r Calculated_replicated_analysis, eval=False}
-calc_rep_analysis <- automate_calc_replicate_comparison(FDR_threshold = 0.01)
+high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.01, hits_in_X_reps = 16)
+inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.01, hits_in_X_reps = 10)
 
-excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_in_all_runs_", file_suffix))
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_high_confidence_", file_suffix))
+write_xlsx(calc_rep_analysis$Hits_in_X_df, excel_file_path)
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_explorative_", file_suffix))
 write_xlsx(calc_rep_analysis$Hits_in_X_df, excel_file_path)
 ```
 ## Compare Sublibraries 

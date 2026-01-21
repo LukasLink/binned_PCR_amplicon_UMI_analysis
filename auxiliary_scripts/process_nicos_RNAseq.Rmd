@@ -1,0 +1,320 @@
+---
+title: "01_V2_RNAseq_DEG_NB_EXP060_only_loading_part"
+author: "Nicolo Battisti"
+date: "2025-11-26"
+output: html_document
+---
+  
+```{r}
+############################################################
+## DESeq2 analysis for VK2FQF bulk RNA-seq
+## - Correct sample mapping by numeric ID
+## - Integer counts
+## - Group-based design
+## - PCA (vst)
+## - Distance heatmap
+## - Volcano plot for DEGs
+############################################################
+library(tibble)
+library(biomaRt)
+library(conflicted)
+library(tidyverse)
+library(DESeq2)
+library(pheatmap)
+library(ggplot2)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+conflicts_prefer(dplyr::rename)
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::slice)
+
+# Set the output directory
+outdir <- "/g/steinmetz/battisti/Data_analyses/bulkRNAseq/V2/analyses"
+
+## 1) Load expression matrix
+mat <- read.table(
+  "/g/steinmetz/battisti/Data_analyses/bulkRNAseq/V2/rawdata/VK2FQF-expression-matrix_new.tsv",
+  header = TRUE,
+  sep = "\t",
+  row.names = 1,
+  check.names = FALSE
+)
+
+# Extract the gene_name column to preserve it
+gene_names <- mat$gene_name
+
+## 2) Extract raw count columns (those ending in "_count")
+count_cols <- grepl("_count$", colnames(mat))
+cts <- as.matrix(mat[, count_cols])
+names(gene_names) <- rownames(mat)
+
+## 3) Ensure columns are ordered by numeric sample ID (NOT alphabetically)
+
+# Example colnames(cts): "VK2FQF_1_count", "VK2FQF_10_count", ...
+# Extract the number between "VK2FQF_" and "_count"
+sample_numbers <- as.integer(sub("VK2FQF_(\\d+)_count", "\\1", colnames(cts)))
+
+# Order columns by these numeric sample IDs
+order_idx <- order(sample_numbers)
+cts <- cts[, order_idx]
+
+# Sanity check
+# cbind(colnames(cts), sample_numbers[order_idx])
+
+## 4) Convert counts to integer (DESeq2 expects integer counts)
+storage.mode(cts) <- "double"
+cts_int <- round(cts)
+storage.mode(cts_int) <- "integer"
+cts <- cts_int
+
+## 5) Map sample numbers (1–32) to your biological sample names, excluding `14B11_D_I_R2`
+sample_map <- c(
+  "WT_NT_R1",        #  1
+  "WT_NT_R2",        #  2
+  "14D9_NT_R1",      #  3
+  "14D9_NT_R2",      #  4
+  "14B11_NT_R1",     #  5
+  "14B11_NT_R2",     #  6
+  "14B11_G_L10_R1",  #  7
+  "14B11_G_U10_R1",  #  8
+  "14B11_G_L1_R1",   #  9
+  "14B11_G_U1_R1",   # 10
+  "14B11_G_I_R1",    # 11
+  "14B11_G_L10_R2",  # 12
+  "14B11_G_U10_R2",  # 13
+  "14B11_G_I_R2",    # 14
+  "14B11_P_L10_R1",  # 15
+  "14B11_P_U10_R1",  # 16
+  "14B11_P_L1_R1",   # 17
+  "14B11_P_U1_R1",   # 18
+  "14B11_P_I_R1",    # 19
+  "14B11_P_L10_R2",  # 20
+  "14B11_P_U10_R2",  # 21
+  "14B11_P_I_R2",    # 22  
+  "14B11_D_L10_R1",  # 23
+  "14B11_D_U10_R1",  # 24
+  "14B11_D_L1_R2",   # 25
+  "14B11_D_U1_R2",   # 26
+  "14B11_D_I_R1",    # 27
+  "14B11_D_L10_R2",  # 28
+  "14B11_D_U10_R2",  # 29
+  "14B11_D_I_R2",    # 30
+  "14B11_P_L1_R2",   # 31
+  "14B11_P_U1_R2"    # 32
+)
+
+# Exclude `14B11_D_I_R2` from sample map
+#sample_map <- sample_map[sample_map != "14B11_D_I_R2"]
+
+#cts <- cts[, colnames(cts) != "VK2FQF_30_count"]
+
+stopifnot(length(sample_map) == ncol(cts))
+colnames(cts) <- sample_map
+
+## 6) Build colData by parsing sample names
+samples <- colnames(cts)
+parts <- strsplit(samples, "_")
+
+cell_type <- sapply(parts, `[`, 1)                 # WT, 14D9, 14B11
+treatment <- sapply(parts, `[`, 2)                 # NT, P, D, G
+replicate <- sapply(parts, function(x) tail(x, 1)) # R1, R2
+
+sorted_population <- sapply(parts, function(x) {
+  if (length(x) == 4) x[3] else "bulk"            # L10/U10/L1/U1/I or "bulk"
+})
+
+group <- paste(cell_type, treatment, sorted_population, sep = "_")
+# e.g. "WT_NT_bulk", "14B11_P_L10", "14B11_D_I", ...
+
+coldata <- data.frame(
+  row.names         = samples,
+  cell_type         = factor(cell_type),
+  treatment         = factor(treatment),
+  sorted_population = factor(sorted_population),
+  replicate         = factor(replicate),
+  group             = factor(group)
+)
+
+cat("\nFirst rows of coldata:\n")
+print(head(coldata))
+
+## 7) Create DESeqDataSet with a simple group-based design
+dds <- DESeqDataSetFromMatrix(
+  countData = cts,
+  colData   = coldata,
+  design    = ~ group
+)
+
+## 8) Pre-filter low-count genes (optional but recommended)
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep, ]
+
+## 9) Run DESeq2
+dds <- DESeq(dds)
+
+## 10) Variance-stabilizing transform (vst is fast and good for 30+ samples)
+vsd <- vst(dds, blind = TRUE)
+
+## 11) PCA plots
+# Basic PCA, grouping by cell type and treatment
+plotPCA(vsd, intgroup = c("cell_type", "treatment"))
+
+# Nicer ggplot-based PCA
+pcaData <- plotPCA(vsd, intgroup = c("cell_type", "treatment", "sorted_population"), returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+
+
+## 12) Sample distance heatmap
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- colnames(vsd)
+colnames(sampleDistMatrix) <- colnames(vsd)
+
+
+## 13) Differential expression for a chosen comparison (single example)
+
+# Check which groups exist:
+cat("\nAvailable group levels:\n")
+print(levels(coldata$group))
+
+# Example comparison:
+# 14B11 P L10 vs 14B11 NT bulk
+res <- results(dds, contrast = c("group", "14B11_P_L10", "14B11_NT_bulk"))
+
+# Order by adjusted p-value
+resOrdered <- res[order(res$padj), ]
+
+# Add gene names to the results table
+res_df <- as.data.frame(resOrdered)
+res_df$gene_name <- gene_names[rownames(res_df)]  # Add the gene_name from the expression matrix
+
+head(res_df)
+
+
+## Volcano plot for this contrast
+alpha <- 0.05
+lfc_thr <- 1  # absolute log2FC threshold
+
+res_df$significant <- ifelse(
+  !is.na(res_df$padj) & res_df$padj < alpha & abs(res_df$log2FoldChange) > lfc_thr,
+  "significant", "not_significant"
+)
+
+
+## 14) Save DESeqDataSet for later use
+saveRDS(dds, file = file.path(outdir, "dds_for_later_use.RDS"))
+
+```
+```{r}
+
+nico_untreated_df <- as.data.frame(cts)
+nico_untreated_df <- nico_untreated_df %>%
+  dplyr::select(WT_NT_R1, WT_NT_R2,
+         `14D9_NT_R1`, `14D9_NT_R2`,
+         `14B11_NT_R1`, `14B11_NT_R2`) %>%
+  tibble::rownames_to_column(var = "gene_id")
+
+combined_df <- nico_untreated_df %>%
+  left_join(
+    res_df %>%
+      as.data.frame() %>%
+      tibble::rownames_to_column("gene_id") %>%
+      select(gene_id, log2FoldChange, padj),
+    by = "gene_id"
+  )
+
+
+# (Optional but recommended) remove Ensembl version suffix like ENSG... .12
+combined_df <- combined_df %>%
+  mutate(gene_id = sub("\\..*$", "", gene_id))
+
+mart <- useEnsembl(
+  biomart = "genes",
+  dataset = "hsapiens_gene_ensembl",
+  mirror  = "useast"
+)
+
+gene_annot <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol", "entrezgene_id",
+                 "start_position", "end_position"),
+  filters    = "ensembl_gene_id",
+  values     = unique(combined_df$gene_id),
+  mart       = mart
+) %>%
+  mutate(gene_length = end_position - start_position + 1) %>%
+  transmute(
+    gene_id     = ensembl_gene_id,
+    symbol      = hgnc_symbol,
+    entrez      = entrezgene_id,
+    gene_length = gene_length
+  ) %>%
+  distinct(gene_id, .keep_all = TRUE)
+
+comb_annot_df <- combined_df %>%
+  left_join(gene_annot, by = "gene_id")
+
+
+# only map the ones that are missing entrez
+missing_genes <- comb_annot_df$gene_id[is.na(comb_annot_df$entrez)]
+
+entrez_lookup <- mapIds(
+  org.Hs.eg.db,
+  keys      = missing_genes,
+  column    = "ENTREZID",
+  keytype   = "ENSEMBL",
+  multiVals = "first"
+)
+
+# fill NAs in entrez
+comb_annot_df <- comb_annot_df %>%
+  mutate(entrez = ifelse(is.na(entrez), entrez_lookup[gene_id], entrez))
+
+missing_sym <- comb_annot_df$gene_id[is.na(comb_annot_df$symbol) | comb_annot_df$symbol == ""]
+
+symbol_lookup <- mapIds(
+  org.Hs.eg.db,
+  keys      = missing_sym,
+  column    = "SYMBOL",
+  keytype   = "ENSEMBL",
+  multiVals = "first"
+)
+
+comb_annot_df <- comb_annot_df %>%
+  mutate(symbol = ifelse(is.na(symbol) | symbol == "", symbol_lookup[gene_id], symbol))
+
+# TPM function (counts normalized by gene length + library size)
+calc_tpm <- function(counts, gene_length_bp) {
+  rpk <- counts / (gene_length_bp / 1000)                  # reads per kb
+  tpm <- rpk / (sum(rpk, na.rm = TRUE) / 1e6)              # per million scaling
+  return(tpm)
+}
+cols <- c("WT_NT_R1", "WT_NT_R2",
+          "14D9_NT_R1", "14D9_NT_R2",
+          "14B11_NT_R1", "14B11_NT_R2")
+
+comb_annot_tpkm_df <- comb_annot_df %>%
+  filter(!is.na(gene_length), gene_length > 0) %>%   # drop NA gene_length rows
+  mutate(
+    WT = rowMeans(select(., WT_NT_R1, WT_NT_R2), na.rm = TRUE),
+    dual_rep_14D9  = rowMeans(select(., `14D9_NT_R1`, `14D9_NT_R2`), na.rm = TRUE),
+    dual_rep_14B11 = rowMeans(select(., `14B11_NT_R1`, `14B11_NT_R2`), na.rm = TRUE)
+  ) %>%
+  mutate(
+    across(
+      all_of(c(cols, "WT", "dual_rep_14D9", "dual_rep_14B11")),
+      ~ calc_tpm(.x, gene_length),
+      .names = "TPM_{.col}"
+    )
+  )
+saveRDS(comb_annot_tpkm_df, "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
+```
+I renamed the dataframe comb_annot_df
+
+cols <- c("WT_NT_R1", "WT_NT_R2",
+          "14D9_NT_R1", "14D9_NT_R2",
+          "14B11_NT_R1", "14B11_NT_R2")
+
+ok, now I want to calculate the TPKM for all of these columns. 
+To do this, I first want to drop all na rows in gene_length
