@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH -J RRMA_3     # Job Name                # chmod +x /home/link/Run_R_markdown_array.sh
-#SBATCH -A lsteinme             # profile of the group                # sbatch ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/Run_R_markdown_array.sh   # sbatch --dependency=afterok:24467230 /home/link/Run_R_markdown.sh
-#SBATCH --mem 6g               # Total memory required for the job
+#SBATCH -J RRMA_GAL     # Job Name                # chmod +x /home/link/Run_R_markdown_array.sh
+#SBATCH -A lsteinme             # profile of the group                # sbatch ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/Run_R_markdown_array.sh   
+#SBATCH --mem 6g               # Total memory required for the job    # sbatch --dependency=afterok:24467230 /home/link/Run_R_markdown.sh
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 1                   # Number of CPUs
-#SBATCH -t 00:30:00             # Runtime until the job is forcefully canceled
-#SBATCH --array=0-8
+#SBATCH -t 00:15:00             # Runtime until the job is forcefully canceled
+#SBATCH --array=0-18
 #SBATCH --qos normal 
 #SBATCH -o /g/steinmetz/link/logs/RRMA_%A_%a.out
 #SBATCH -e /g/steinmetz/link/logs/RRMA_%A_%a.err
@@ -20,6 +20,7 @@
 MODE="script"  # <-- change this to "pdf" or "html" or "script"as needed
 # Choose if options or folders are to be alternated.
 DIFFERENT_OR_SAME="same" # can be "same" or "different"
+SAME_OPTIONS="replicates" # can be "replicates", "", or "subsample"
 # Path to the Rmd file
 RMD_FILE="/home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/data_analysis_with_MAUDE.Rmd"
 
@@ -47,19 +48,34 @@ fi
 if [ "$DIFFERENT_OR_SAME" == "same" ]; then
   echo "Running the same combination for multiple folders"
   
-  percentages=("90" "80" "70" "60" "50" "40" "30" "20" "10")
-  pct=${percentages[$i]}            # e.g. "90"
+  if [ "$SAME_OPTIONS" == "subsample" ]; then
+    percentages=("90" "80" "70" "60" "50" "40" "30" "20" "10")
+    pct=${percentages[$i]}            # e.g. "90"
+    
+    OUTPUT_FOLDER_ROOT="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3/HepG2_dual_rep_PA_subsample"
+    OUTPUT_FOLDER="${OUTPUT_FOLDER_ROOT}/subsample_${pct}"
+    
+    PIPELINE="lukas"
+    METHOD=""
+    DATA_TYPE="reads"
+    NORM_METHOD="control_median"
+    EXTRA_SUFFIX=""
+    
+    echo "Susbsample Task $i -> ${OUTPUT_FOLDER}"
+  fi
   
-  OUTPUT_FOLDER_ROOT="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3/HepG2_dual_rep_PA_subsample"
-  OUTPUT_FOLDER="${OUTPUT_FOLDER_ROOT}/subsample_${pct}"
+  if [ "$SAME_OPTIONS" == "replicates" ]; then
   
-  PIPELINE="lukas"
-  METHOD=""
-  DATA_TYPE="reads"
-  NORM_METHOD="control_median"
-  EXTRA_SUFFIX=""
-  
-  echo "Task $i -> ${OUTPUT_FOLDER}"
+    OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+    
+    PIPELINE="lukas"
+    METHOD=""
+    DATA_TYPE="reads"
+    NORM_METHOD="control_median"
+    EXTRA_SUFFIX="rep$((i+1))"
+    
+    echo "Susbsample Task $i -> $EXTRA_SUFFIX"
+  fi
 fi
 ################################################################################
 # END OF USER OPTIONS
@@ -86,7 +102,7 @@ if [ "$MODE" == "script" ]; then
 
   echo "Running Rmd as plain R script..."
   Rscript -e "knitr::purl('$RMD_FILE', output='$R_SCRIPT', documentation = 0)"
-  Rscript "$R_SCRIPT" --output_folder "$OUTPUT_FOLDER" --pipeline "$PIPELINE" --data_type "$DATA_TYPE" --method "$METHOD" --norm_method "$NORM_METHOD" --drop_0s FALSE --recover_input TRUE # --extra_suffix "$EXTRA_SUFFIX"
+  Rscript "$R_SCRIPT" --output_folder "$OUTPUT_FOLDER" --pipeline "$PIPELINE" --data_type "$DATA_TYPE" --method "$METHOD" --norm_method "$NORM_METHOD" --drop_0s FALSE --recover_input TRUE --extra_suffix "$EXTRA_SUFFIX"
 
 
 elif [ "$MODE" == "pdf" ]; then
