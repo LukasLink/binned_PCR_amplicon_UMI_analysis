@@ -33,14 +33,14 @@ first_time      <- TRUE
 # Mandatory output_folder
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
 output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Atto"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 john_folder <- ""
 # If any files are to be skipped list their names here
 
 skip_list <- c() # individual files, example: c("I_L3_5", "U_L1_2")
-skip_list_sublib <- c() # entire sublibraries, example: c("L4","L5")
+skip_list_sublib <- c("L3") # entire sublibraries, example: c("L4","L5")
 skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # Warning: skipping entire sublibraries and sample numbers does not work for
 # non numeric samples, or samples >9999
@@ -49,15 +49,19 @@ skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # If any of the controls should be considered targeting (example EGFP and AAVS1)
 # Nico HepG2 screen
 include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
-# include_controls_list <- c()
 
 # Only Specific controls
 # Liangfu wants only these controls to be used:
 # Liangfu iBeer Screen
 if (FALSE){
+  include_controls_list <- c()
   use_only_these_controls_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Liangfu_Non_targeting_sgRNA_list_Genomewide_Daniel Lib.csv"
   use_only_these_controls_list <- read.csv(use_only_these_controls_path, header = FALSE, stringsAsFactors = FALSE)$V1
-}
+} else {
+  if (exists("use_only_these_controls_list")) {
+    rm(use_only_these_controls_list)
+  }
+} 
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
 data_type           <- "reads"   # can be "reads" or "umis"
@@ -2080,27 +2084,52 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     arrange(significanceZ)
   # Add Liangfus expression data
   HepG2_tpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
-  
+
   export_df <- export_df %>%
   left_join(
     HepG2_tpm_Xie %>%
       filter(!is.na(entrez_id)) %>%
-      select(entrez_id, HepG2_TPM_Xie = HepG2, primary_hepato_TPM_Xie = primary),
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             HepG2_TPM_Xie = HepG2,
+             primary_hepato_TPM_Xie = primary),
     by = c("entrez" = "entrez_id")
   )
   
   # Add Nicos HepG2 RNAseq expression data
   HepG2_tpm_Battisti <- readRDS("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
-    export_df <- export_df %>%
-      left_join(
-        HepG2_tpm_Battisti %>%
-          filter(!is.na(entrez)) %>%
-          select(entrez,
-                 HepG2_TPM_Battisti = TPM_WT,
-                 HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
-                 HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
-        by = "entrez"
+  
+  export_df <- export_df %>%
+    left_join(
+      HepG2_tpm_Battisti %>%
+        filter(!is.na(entrez)) %>%
+        distinct(entrez, .keep_all = TRUE) %>% 
+        select(entrez,
+               HepG2_TPM_Battisti = TPM_WT,
+               HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
+               HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
+      by = "entrez"
       )
+
+  # Add information about essential genes
+  essential_df <- read.delim(
+    "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/essential_genes.txt",
+    header = FALSE,
+    sep = "\t",
+    stringsAsFactors = FALSE
+  ) %>%
+    setNames(c("symbol", "entrez")) %>%   # naming as you requested
+    mutate(entrez = sub("^HGNC:", "", entrez))  # remove "HGNC:"
+
+  export_df <- export_df %>%
+  mutate(
+    essential = if_else(
+      as.character(entrez) %in% as.character(essential_df$entrez),
+      "Yes",
+      "No",
+      missing = "No"
+    )
+  )
   
   return(export_df)
 }
@@ -2427,5 +2456,10 @@ write_csv(export_df, csv_file_path)
 excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "MAUDE_Hits", file_suffix))
 write_xlsx(export_df, excel_file_path)
 ```
+``` {r read_count_export, eval=FALSE}
 
+# Write to Excel
+csv_file_path <- sub(".rds",".csv",paste0(results_output_folder, "/", "Counts", file_suffix))
+write_csv(maude_counts_df, csv_file_path)
+```
 

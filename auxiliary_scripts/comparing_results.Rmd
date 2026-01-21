@@ -27,12 +27,12 @@ conflicts_prefer(dplyr::slice)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- TRUE
+first_time      <- FALSE
 
 # Directories
 # Mandatory output_folder
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/COR"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
 
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -48,8 +48,19 @@ skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # Extra target list
 # If any of the controls should be considered targeting (example EGFP and AAVS1)
 include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
-include_controls_list <- c()
 
+# Only Specific controls
+# Liangfu wants only these controls to be used:
+# Liangfu iBeer Screen
+if (FALSE){
+  include_controls_list <- c()
+  use_only_these_controls_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Liangfu_Non_targeting_sgRNA_list_Genomewide_Daniel Lib.csv"
+  use_only_these_controls_list <- read.csv(use_only_these_controls_path, header = FALSE, stringsAsFactors = FALSE)$V1
+} else {
+  if (exists("use_only_these_controls_list")) {
+    rm(use_only_these_controls_list)
+  }
+} 
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
 data_type           <- "reads"   # can be "reads" or "umis"
@@ -1119,27 +1130,52 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     arrange(significanceZ)
   # Add Liangfus expression data
   HepG2_tpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
-  
+
   export_df <- export_df %>%
   left_join(
     HepG2_tpm_Xie %>%
       filter(!is.na(entrez_id)) %>%
-      select(entrez_id, HepG2_TPM_Xie = HepG2, primary_hepato_TPM_Xie = primary),
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             HepG2_TPM_Xie = HepG2,
+             primary_hepato_TPM_Xie = primary),
     by = c("entrez" = "entrez_id")
   )
   
   # Add Nicos HepG2 RNAseq expression data
   HepG2_tpm_Battisti <- readRDS("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
-    export_df <- export_df %>%
-      left_join(
-        HepG2_tpm_Battisti %>%
-          filter(!is.na(entrez)) %>%
-          select(entrez,
-                 HepG2_TPM_Battisti = TPM_WT,
-                 HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
-                 HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
-        by = "entrez"
+  
+  export_df <- export_df %>%
+    left_join(
+      HepG2_tpm_Battisti %>%
+        filter(!is.na(entrez)) %>%
+        distinct(entrez, .keep_all = TRUE) %>% 
+        select(entrez,
+               HepG2_TPM_Battisti = TPM_WT,
+               HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
+               HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
+      by = "entrez"
       )
+
+  # Add information about essential genes
+  essential_df <- read.delim(
+    "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/essential_genes.txt",
+    header = FALSE,
+    sep = "\t",
+    stringsAsFactors = FALSE
+  ) %>%
+    setNames(c("symbol", "entrez")) %>%   # naming as you requested
+    mutate(entrez = sub("^HGNC:", "", entrez))  # remove "HGNC:"
+
+  export_df <- export_df %>%
+  mutate(
+    essential = if_else(
+      as.character(entrez) %in% as.character(essential_df$entrez),
+      "Yes",
+      "No",
+      missing = "No"
+    )
+  )
   
   return(export_df)
 }
@@ -1742,7 +1778,7 @@ calculate_correlation <- function(reference_df,
 make_compare_df <- function(df_list, name_list, FDR_threshold, significance_filter = NULL, top_N = NULL) {
   
   if (length(df_list) != length(name_list)){
-    stop("ERROR: in make_compare_df -> length of df_list must be equal to lenght of name_list")
+    stop(paste("ERROR: in make_compare_df -> length of df_list:",length(df_list), " must be equal to lenght of name_list:",length(name_list)))
   }
   # First dataframe as the reference (100% by definition)
   reference_df <- df_list[[1]] %>%
@@ -2035,7 +2071,10 @@ compare_df_list <- function(df_list,
                             name_list,
                             FDR_threshold = 0.05,
                             top_N = NULL,
-                            comparing = "") {
+                            comparing = "",
+                            correlation_heatmap = TRUE,
+                            overlap = TRUE,
+                            venn_diagram = TRUE) {
   
 
   all_hits_df <- make_compare_df(df_list, name_list, FDR_threshold)
@@ -2054,24 +2093,29 @@ compare_df_list <- function(df_list,
   # Loop over all dataframes in the results list and plot them
   for (scenario_name in names(results_list)) {
     signif_filter_for_scenario <- signif_map[[scenario_name]]
-    
-    p <- plot_overlap(results_list[[scenario_name]],
-                      scenario_name,
-                      comparing = comparing)
-    print(p) 
-    q <- make_correlation_heatmap(df_list,
-                                  name_list,
-                                  comparing = comparing,
-                                  plot_title = scenario_name,
-                                  significance_filter = signif_filter_for_scenario,
-                                  FDR_threshold = FDR_threshold)
-    print(q)
-    r <- make_venn_from_overlap_df(results_list[[scenario_name]],
-                                   ncol = 1,
-                                   comparing = comparing,
-                                   main_title = scenario_name)
-    grid::grid.newpage()
-    grid::grid.draw(r)
+    if (correlation_heatmap == TRUE){
+      q <- make_correlation_heatmap(df_list,
+                                    name_list,
+                                    comparing = comparing,
+                                    plot_title = scenario_name,
+                                    significance_filter = signif_filter_for_scenario,
+                                    FDR_threshold = FDR_threshold)
+      print(q)      
+    }
+    if (overlap == TRUE){
+      p <- plot_overlap(results_list[[scenario_name]],
+                        scenario_name,
+                        comparing = comparing)
+      print(p)       
+    }
+    if (venn_diagram == TRUE){
+      r <- make_venn_from_overlap_df(results_list[[scenario_name]],
+                                     ncol = 1,
+                                     comparing = comparing,
+                                     main_title = scenario_name)
+      grid::grid.newpage()
+      grid::grid.draw(r)      
+    }
   }
   return(results_list)
 }
@@ -2158,7 +2202,10 @@ move_subsamples <- function(subsample_master_dir,
 
 automate_subsample_comparison <- function(file_info_prefix = get("file_info_suffix",
                                                              envir = .GlobalEnv),
-                                          FDR_threshold = 0.05) {
+                                          FDR_threshold = 0.05,
+                                          correlation_heatmap = TRUE,
+                                          overlap = TRUE,
+                                          venn_diagram = TRUE) {
   # Get the current settings from the global environment
   if(exists("Hits_current_settings")){
     Hits_current_settings <- get("Hits_current_settings", envir = .GlobalEnv)
@@ -2203,7 +2250,10 @@ automate_subsample_comparison <- function(file_info_prefix = get("file_info_suff
                             name_list = c(100, tag_df$tag),
                             FDR_threshold = FDR_threshold,
                             comparing = "subsamples",
-                            top_N = NULL)
+                            top_N = NULL,
+                            correlation_heatmap = correlation_heatmap,
+                            overlap = overlap,
+                            venn_diagram = venn_diagram)
   
   return(result)
 }
@@ -2212,7 +2262,10 @@ automate_subsample_comparison <- function(file_info_prefix = get("file_info_suff
 
 ``` {r compare_sublibraries_functions, eval=TRUE}
 automate_sublibrary_comparison <- function(file_info_suffix = get("file_info_suffix", envir = .GlobalEnv),
-                                           FDR_threshold = 0.05) {
+                                           FDR_threshold = 0.05,
+                                          correlation_heatmap = TRUE,
+                                          overlap = TRUE,
+                                          venn_diagram = TRUE) {
   # Get the current settings from the global environment
   Hits_all_sublibs <- add_info_wrapper(file_info_suffix)
   rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)
@@ -2238,7 +2291,10 @@ automate_sublibrary_comparison <- function(file_info_suffix = get("file_info_suf
   result <- compare_df_list(df_list = c(list(Hits_all_sublibs), Hits_df_list),
                                 name_list = c("all_sublibs", sublib_names),
                                 FDR_threshold = FDR_threshold,
-                                top_N = NULL)
+                                top_N = NULL,
+                            correlation_heatmap = correlation_heatmap,
+                            overlap = overlap,
+                            venn_diagram = venn_diagram)
   
   return(result)
 }
@@ -2247,7 +2303,10 @@ automate_sublibrary_comparison <- function(file_info_suffix = get("file_info_suf
 
 ``` {r compare_calc_replicates_functions, eval=TRUE}
 
-find_Hits_and_FDR_appearing_in_X_replicates <- function(df_list, name_list, FDR_threshold = 0.05, X = NULL){
+find_Hits_and_FDR_appearing_in_X_replicates <- function(df_list,
+                                                        name_list,
+                                                        FDR_threshold = 0.05,
+                                                        X = NULL){
   if (is.null(X)){
     X <- length(df_list)
   }
@@ -2282,7 +2341,11 @@ find_Hits_and_FDR_appearing_in_X_replicates <- function(df_list, name_list, FDR_
 
 automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info_suffix", envir = .GlobalEnv),
                                            FDR_threshold = 0.05,
-                                           hits_in_X_reps = NULL) {
+                                           hits_in_X_reps = NULL,
+                                          correlation_heatmap = TRUE,
+                                          overlap = TRUE,
+                                          venn_diagram = TRUE) {
+  
   # Get the current settings from the global environment
   Hits_rep_0 <- add_info_wrapper(file_info_suffix)
   rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)
@@ -2297,19 +2360,24 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
     "\\1",
     basename(rds_files)
   )
+  rep_name <- unique(rep_name)
   rep_name_long <- paste0("calc_rep_", rep_name)
   rep_suffixes <- paste0(file_info_suffix, "_rep", rep_name)
   rep_suffixes <- unique(rep_suffixes)
+  
   # Generate Hits_df_list using add_info_wrapper for each sublib_suffixes
   Hits_df_list <- lapply(rep_suffixes, function(rep_suffixes) {
     add_info_wrapper(rep_suffixes)
   })
-
   # Call compare_sublibraries with the generated df_list and sublib_names
   overlap_df <- compare_df_list(df_list = c(list(Hits_rep_0), Hits_df_list),
                                 name_list = c("calc_rep_0", rep_name_long),
                                 FDR_threshold = FDR_threshold,
-                                top_N = NULL)
+                                top_N = NULL,
+                            correlation_heatmap = correlation_heatmap,
+                            overlap = overlap,
+                            venn_diagram = venn_diagram)
+  
   Hits_and_FDR <- find_Hits_and_FDR_appearing_in_X_replicates(df_list = c(list(Hits_rep_0), Hits_df_list),
                                                               name_list = c("calc_rep_0", rep_name_long),
                                                               X = hits_in_X_reps,
@@ -2324,20 +2392,25 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
 ```
 
 ``` {r Calculated_replicated_analysis, eval=False}
-high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.01, hits_in_X_reps = 16)
-inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.01, hits_in_X_reps = 10)
+high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.2,
+                                                           hits_in_X_reps = 16,
+                                                           correlation_heatmap = FALSE,
+                                                           venn_diagram = FALSE)
+inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.2,
+                                                     hits_in_X_reps = 10,
+                                                     correlation_heatmap = FALSE,
+                                                     venn_diagram = FALSE)
 
-excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_high_confidence_", file_suffix))
-write_xlsx(calc_rep_analysis$Hits_in_X_df, excel_file_path)
-excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_explorative_", file_suffix))
-write_xlsx(calc_rep_analysis$Hits_in_X_df, excel_file_path)
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_high_confidence", file_suffix))
+write_xlsx(high_confidence_hits$Hits_in_X_df, excel_file_path)
+excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_explorative", file_suffix))
+write_xlsx(inclusive_hits$Hits_in_X_df, excel_file_path)
 ```
 ## Compare Sublibraries 
 For this to function You need to run data_analysis_with_MAUDE multiple times,
 once without excluding sublibraries, and then at least once more with
 one or more sublibraries excluded using the skip_list_sublib setting.
 ``` {r compare_sublibraries_analysis, eval=False}
-
 test <- automate_sublibrary_comparison(FDR_threshold = 0.05)
 ```
 
@@ -2353,6 +2426,7 @@ if (FALSE){
  
 automate_subsample_comparison(FDR_threshold = 0.05)
 ```
+
 ``` {r control_distribution_heatmap, eval=TRUE}
 library(pheatmap)
 library(grid)
@@ -2402,7 +2476,7 @@ for (k in seq_along(heatmap_chunks)) {
   row_start <- min(idx_list[[k]])
   row_end   <- max(idx_list[[k]])
 
-  pheatmap(
+  pheatmap::pheatmap(
     heatmap_chunks[[k]],
     scale = "none",
     fontsize_row = 6,
@@ -2420,7 +2494,7 @@ for (k in seq_along(heatmap_chunks)) {
   row_start <- min(idx_list[[k]])
   row_end   <- max(idx_list[[k]])
 
-  ph <- pheatmap(
+  ph <- pheatmap::pheatmap(
     heatmap_chunks[[k]],
     scale = "none",
     main = paste0("Heatmap ", k, " (rows ", row_start, "–", row_end, ")"),
@@ -2644,7 +2718,7 @@ cat("Rows where all three columns are 1:", count_all_ones_false, "\n")
 
 ```
 
-```{r Roche_compare_functions, eval=TRUE}
+```{r Roche_compare_functions, eval=FALSE}
 Hits_current_settings <- add_info_wrapper(file_info_suffix)
 if (length(include_controls_list) > 0) {
   for (control_gene in include_controls_list) {
