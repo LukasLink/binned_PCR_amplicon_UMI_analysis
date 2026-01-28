@@ -18,23 +18,32 @@ library(Biostrings)
 library(readxl)
 library(conflicted)
 library(ShortRead)
+library(tibble)
+library(stringr)
+
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::count)
 conflicts_prefer(dplyr::select)
-
+################################################################################
 # User Options
-###############
+################################################################################
 
-output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/library"
+output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
 first_time <- TRUE
 library_source <- "six_sublib_whole_genome" # can be lukas_custom or six_sublib_whole_genome
-
-lukas_custom_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/lukas_custom_libraries/h_ves_endo_sgRNA_library_full_info.xlsx"
-six_sublib_whole_genome_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s4.xlsx"
-six_sublib_whole_genome_counts_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_PCR/science.abj3013_table_s6.xlsx"
+################################################################################
 # End of User Options
-###############
+################################################################################
+
+rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
+                    error = function(e) getwd())
+data_dir <- file.path(rmd_dir, "data")
+
+lukas_custom_file_path <- file.path(data_dir, "h_ves_endo_sgRNA_library_full_info.xlsx")
+six_sublib_whole_genome_file_path <- file.path(data_dir, "six_sublib_whole_genome_sgRNA_library_science.abj3013_table_s4.xlsx")
+six_sublib_whole_genome_counts_file_path <- file.path(data_dir, "six_sublib_whole_genome_plasmid_counts_science.abj3013_table_s6.xlsx")
+
 
 make_clean_dir <- function(base_path, sub_path) {
   
@@ -163,7 +172,6 @@ if (library_source == "lukas_custom"){
     merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder, "merged_sgRNA_df.rds"))
   }
 }
-
 ```
 
 ## Generate Reference Fasta
@@ -271,6 +279,154 @@ write.table(NOPE_sgRNA_ref_df,
 write_fasta(NOPE_sgRNA_df, get_file_path(genome_output_folder, "NOPE_ref.fa"))
 
 print(paste("For the --genomeSAindexNbases option use:",round(min(14, log2(sum(nchar(NOPE_sgRNA_df$full_oligo)))/2-1),0)))
+```
+
+```{r make_bin_fraction_df, eval=FALSE}
+################################################################################
+# Nicos Data
+
+# Build the table as a data frame (only columns we need)
+meta <- tribble(
+  ~sample, ~moiety,  ~fraction,
+  "L1_L",  "PA",     0.1102002722,
+  "L1_U",  "PA",     0.1011648180,
+  "L1_I",  "PA",     0.0916281571,
+  "L2_L",  "PA",     0.08610088386,
+  "L2_U",  "PA",     0.07879327902,
+  "L2_I",  "PA",     0.1,
+  "L3_L",  "PA",     0.1,
+  "L3_U",  "PA",     0.1,
+  "L3_I",  "PA",     0.1,
+  "L4_L",  "PA",     0.1,
+  "L4_U",  "PA",     0.1,
+  "L4_I",  "PA",     0.1,
+
+  "L1_L",  "GALNAC", 0.1,
+  "L1_U",  "GALNAC", 0.1,
+  "L1_I",  "GALNAC", 0.1,
+  "L2_L",  "GALNAC", 0.1192003178,
+  "L2_U",  "GALNAC", 0.09377995498,
+  "L2_I",  "GALNAC", 0.1,
+  "L3_L",  "GALNAC", 0.1170285031,
+  "L3_U",  "GALNAC", 0.09532918512,
+  "L3_I",  "GALNAC", 0.1,
+  "L4_L",  "GALNAC", 0.1042435726,
+  "L4_U",  "GALNAC", 0.06260984613,
+  "L4_I",  "GALNAC", 0.1,
+
+  "L1_L",  "DCA",    0.1,
+  "L1_U",  "DCA",    0.1,
+  "L1_I",  "DCA",    0.1,
+  "L2_L",  "DCA",    0.1,
+  "L2_U",  "DCA",    0.1,
+  "L2_I",  "DCA",    0.1,
+  "L3_L",  "DCA",    0.1,
+  "L3_U",  "DCA",    0.1,
+  "L3_I",  "DCA",    0.1,
+  "L4_L",  "DCA",    0.1,
+  "L4_U",  "DCA",    0.1,
+  "L4_I",  "DCA",    0.1
+)
+
+# Transform as requested
+meta2 <- meta %>%
+  filter(!str_detect(sample, "_I$")) %>%                       # remove *_I
+  mutate(
+    bin = case_when(
+      str_detect(sample, "_U$") ~ "upper",
+      str_detect(sample, "_L$") ~ "lower",
+      TRUE ~ NA_character_
+    ),
+    exp = str_replace(sample, "_[A-Z]$", "_1")                  # trailing _X -> _1
+  ) %>%
+  select(moiety, exp, fraction, bin)
+
+# Split into three data frames
+df_PA     <- meta2 %>% filter(moiety == "PA")     %>% select(exp, fraction, bin)
+df_GALNAC <- meta2 %>% filter(moiety == "GALNAC") %>% select(exp, fraction, bin)
+df_DCA    <- meta2 %>% filter(moiety == "DCA")    %>% select(exp, fraction, bin)
+
+df_PA
+df_GALNAC
+df_DCA
+################################################################################
+# Liangfus Data
+df_CR <- tribble(
+  ~exp,  ~bin,    ~fraction,
+  "L1_1","upper", 0.0123,
+  "L1_1","lower", 0.03175,
+  "L3_1","upper", 0.010425,
+  "L3_1","lower", 0.024625,
+  "L5_1","upper", 0.03775,
+  "L5_1","lower", 0.04475
+)
+
+df_Atto <- tribble(
+  ~exp,  ~bin,    ~fraction,
+  "L1_1","upper", 0.1,
+  "L1_1","lower", 0.1,
+  "L3_1","upper", 0.1,
+  "L3_1","lower", 0.1,
+  "L5_1","upper", 0.1,
+  "L5_1","lower", 0.1
+)
+
+df_Texas <- tribble(
+  ~exp,  ~bin,    ~fraction,
+  "L1_1","upper", 0.04675,
+  "L1_1","lower", 0.011125,
+  "L3_1","upper", 0.040625,
+  "L3_1","lower", 0.045375,
+  "L5_1","upper", 0.05,
+  "L5_1","lower", 0.05
+)
+
+saveRDS(merged_sgRNA_df, get_file_path(rds_output_folder, "bin_fraction.rds"))
+```
+This is how i made the dependancy dataframe, which is simply loaded every time it is needed. 
+A dependency level of -0.5 was chosen as this seems to be common practise, or -1 for extremly strict killers. 
+``` {r make_dependency_df, eval=FALSE}
+if (FALSE) {
+  library(depmap)
+  library(stringr)
+  
+  crispr <- depmap::depmap_crispr()
+  meta   <- depmap::depmap_metadata()
+  
+  # Add lineage (for liver/heart grouping)
+  crispr2 <- crispr %>%
+    left_join(meta %>% select(depmap_id, lineage), by = "depmap_id")
+  rm(crispr)
+  
+  # Helper: summarize mean dependency for a subset of cell lines
+  summarise_dep <- function(df, prefix, cutoff = -0.5) {
+    out <- df %>%
+      group_by(gene_symbol = gene_name, entrez_id) %>%
+      summarise(dep = mean(dependency, na.rm = TRUE), .groups = "drop") %>%
+      mutate(ess = dep <= cutoff)
+  
+    out %>%
+      rename(
+        !!paste0("dependency_", prefix) := dep,
+        !!paste0("essential_",  prefix) := ess
+      )
+  }
+  
+  # --- Build the 4 summaries ---
+  hepG2   <- crispr2 %>% filter(cell_line == "HEPG2_LIVER") %>% summarise_dep("HepG2")
+  general <- summarise_dep(crispr2, "general")
+  
+  liver <- crispr2 %>%
+    filter(!is.na(lineage), str_to_lower(lineage) == "liver") %>%
+    summarise_dep("liver")
+  
+  # --- Final table: start from HepG2 genes and join the extra pairs ---
+  dependency_df <- hepG2 %>%
+    left_join(general, by = c("gene_symbol", "entrez_id")) %>%
+    left_join(liver,   by = c("gene_symbol", "entrez_id"))
+  
+  saveRDS(dependency_df, file.path(data_dir, "dependency_df.rds"))  
+}
 ```
 # Read Filtering
 ## Plot Reads per umi for manual inspection
@@ -801,6 +957,149 @@ quality_control(sgRNA_df_counts)
 
 
 ```{r test, eval=FALSE}
+control_df <- count_df_long %>%
+  filter(str_starts(sgRNA, "CONTROL")) %>%
+  mutate(isNontargeting = str_starts(sgRNA, "CONTROL_C_NONTARG")) %>% 
+  select(sgRNA, sublib, count, isNontargeting)
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+
+control_df <- count_df_long %>%
+  filter(str_starts(sgRNA, "CONTROL")) %>%
+  mutate(
+    isNontargeting = str_starts(sgRNA, "CONTROL_C_NONTARG"),
+    control_class  = case_when(
+      isNontargeting ~ "nontargeting",
+      TRUE           ~ "targeting"
+    )
+  ) %>%
+  select(sgRNA, sublib, count, isNontargeting, control_class)
+
+# per sublib totals (for normalization)
+sublib_totals <- count_df_long %>%
+  group_by(sublib) %>%
+  summarise(total_counts = sum(count, na.rm = TRUE), .groups = "drop")
+
+# control proportions within each sublib (composition of controls)
+control_props_within_controls <- control_df %>%
+  group_by(sublib, sgRNA) %>%
+  summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+  group_by(sublib) %>%
+  mutate(prop_within_controls = count / sum(count)) %>%
+  ungroup()
+
+# control proportions relative to the whole sublib (control abundance)
+control_props_of_library <- control_df %>%
+  group_by(sublib, sgRNA) %>%
+  summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+  left_join(sublib_totals, by = "sublib") %>%
+  mutate(prop_of_library = count / total_counts)
+library(stats)
+
+control_matrix <- function(df) {
+  df %>%
+    group_by(sublib, sgRNA) %>%
+    summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+    group_by(sublib) %>%
+    mutate(prop = count / sum(count)) %>%   # composition within controls
+    ungroup() %>%
+    select(sgRNA, sublib, prop) %>%
+    pivot_wider(names_from = sublib, values_from = prop, values_fill = 0) %>%
+    column_to_rownames("sgRNA") %>%
+    as.matrix()
+}
+
+# All controls
+mat_all <- control_matrix(control_df)
+
+# Targeting-only
+mat_targ <- control_matrix(filter(control_df, !isNontargeting))
+
+# Nontargeting-only
+mat_nt <- control_matrix(filter(control_df, isNontargeting))
+
+corr_long <- function(mat, label) {
+  cm <- cor(mat, method = "spearman")
+  as.data.frame(as.table(cm)) %>%
+    rename(sublib1 = Var1, sublib2 = Var2, corr = Freq) %>%
+    mutate(set = label)
+}
+
+corr_df <- bind_rows(
+  corr_long(mat_all, "all_controls"),
+  corr_long(mat_targ, "targeting_controls"),
+  corr_long(mat_nt, "nontargeting_controls")
+)
+
+ggplot(corr_df, aes(sublib1, sublib2, fill = corr)) +
+  geom_tile() +
+  facet_wrap(~set) +
+  coord_equal() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = NULL, fill = "Spearman")
+library(purrr)
+
+l1_distance_to_mean <- function(mat) {
+  mean_prof <- rowMeans(mat)
+  apply(mat, 2, function(x) sum(abs(x - mean_prof)))
+}
+
+dist_df <- tibble(
+  sublib = colnames(mat_all),
+  L1_all = l1_distance_to_mean(mat_all),
+  L1_targ = l1_distance_to_mean(mat_targ),
+  L1_nt = l1_distance_to_mean(mat_nt)
+) %>%
+  pivot_longer(-sublib, names_to = "set", values_to = "L1")
+
+ggplot(dist_df, aes(x = sublib, y = L1)) +
+  geom_col() +
+  facet_wrap(~set, scales = "free_y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = "L1 distance to mean (smaller = more similar)")
+plot_controls <- function(df, title) {
+  df %>%
+    group_by(sublib, sgRNA) %>%
+    summarise(count = sum(count, na.rm = TRUE), .groups = "drop") %>%
+    left_join(sublib_totals, by = "sublib") %>%
+    mutate(prop_of_library = count / total_counts) %>%
+    ggplot(aes(x = sublib, y = prop_of_library)) +
+    geom_boxplot(outlier.alpha = 0.2) +
+    scale_y_log10() +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = title, x = NULL, y = "Control sgRNA proportion of sublibrary (log10)")
+}
+
+plot_controls(control_df, "All control sgRNAs")
+plot_controls(filter(control_df, !isNontargeting), "Targeting control sgRNAs")
+plot_controls(filter(control_df, isNontargeting), "Nontargeting control sgRNAs")
+summary_table <- function(df, label) {
+  df %>%
+    group_by(sublib) %>%
+    summarise(
+      n_controls = n_distinct(sgRNA),
+      control_counts = sum(count, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(sublib_totals, by = "sublib") %>%
+    mutate(
+      control_fraction = control_counts / total_counts,
+      set = label
+    )
+}
+
+bind_rows(
+  summary_table(control_df, "all_controls"),
+  summary_table(filter(control_df, !isNontargeting), "targeting_controls"),
+  summary_table(filter(control_df, isNontargeting), "nontargeting_controls")
+) %>%
+  arrange(set, desc(control_fraction))
 
 ```
 

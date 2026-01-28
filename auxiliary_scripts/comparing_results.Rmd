@@ -16,12 +16,12 @@ library(ggplot2)
 library(optparse)
 library(ggrepel)
 library(writexl)
-library(metap) 
 
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::select)
 conflicts_prefer(dplyr::slice)
+conflicts_prefer(base::setdiff)
 
 #===============================================================================
 # User Options (can be overrided via CLI)
@@ -32,7 +32,7 @@ first_time      <- FALSE
 # Directories
 # Mandatory output_folder
 output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/COR"
 
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -52,7 +52,7 @@ include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19",
 # Only Specific controls
 # Liangfu wants only these controls to be used:
 # Liangfu iBeer Screen
-if (FALSE){
+if (TRUE){
   include_controls_list <- c()
   use_only_these_controls_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Liangfu_Non_targeting_sgRNA_list_Genomewide_Daniel Lib.csv"
   use_only_these_controls_list <- read.csv(use_only_these_controls_path, header = FALSE, stringsAsFactors = FALSE)$V1
@@ -324,6 +324,10 @@ get_file_path <- function(folder_path, file_name){
   full_path <- gsub("//", "/", full_path, fixed = TRUE)
   return(full_path)
 }
+
+rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
+                    error = function(e) getwd())
+data_dir <- file.path(rmd_dir, "data")
 
 genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
@@ -913,7 +917,285 @@ if (length(include_controls_list) > 0){
   }
 }
 ```
+```{r prepare_data_for_maude, eval=TRUE}
+#Select wether to use targeting_control or non_targeting_control for normalization (or both I guess)
+ctrl_selection <- c("targeting_control","non_targeting_control")
+subsample_controls_func_old <- function(count_df_long, merged_sgRNA_df, percentage_kept_controls = 0.1){
+  
+  percentage_used_controls = 1 - percentage_kept_controls
+  count_df_long_merged <- merge(count_df_long, merged_sgRNA_df[, c("sgrna_id", "entrez")], 
+                                by.x = "sgRNA", by.y = "sgrna_id", 
+                                all.x = TRUE)
+  count_df_long_merged <- count_df_long_merged %>%
+    filter(group_category != "targeting") %>%
+    distinct(sgRNA) %>% 
+    mutate(
+      unique_names = case_when(
+        grepl("CONTROL_C_[A-Za-z0-9]+_", sgRNA) & !grepl("CONTROL_C_NONTARG", sgRNA) ~ sub("CONTROL_C_([A-Za-z0-9]+)_.*", "\\1", sgRNA),
+        grepl("CONTROL_C_NONTARG", sgRNA) ~ sgRNA,  # Keep NONTARG as it is
+        TRUE ~ NA_character_  # Default case, if needed
+      )
+    )
+  unique_entries <- unique(count_df_long_merged$unique_names)
+  assignments <- sample(c(TRUE, FALSE), length(unique_entries), 
+                       prob = c(percentage_kept_controls, percentage_used_controls), replace = TRUE)
+  # Step 3: Create a data frame to map unique entries to the TRUE/FALSE assignments
+  assignment_map <- data.frame(unique_names = unique_entries, keep = assignments)
+  # Step 4: Merge this map back into the original data frame to expand the assignments
+  count_df_long_merged <- count_df_long_merged %>%
+    left_join(assignment_map, by = "unique_names")
+  return_df <- count_df_long %>%
+    left_join(count_df_long_merged %>% select(sgRNA, keep), by = "sgRNA")
+  # Replace NAs in 'keep' with FALSE
+  return_df <- return_df %>%
+    mutate(keep = ifelse(is.na(keep), FALSE, keep)) %>%
+    mutate(
+      # Assign 'kept_control' to group_category when keep is TRUE
+      group_category = ifelse(keep == TRUE, "kept_control", group_category)
+    ) %>%
+    select(-keep)  # Remove the 'keep' column
+  
+  return(return_df)
+}
+subsample_controls_func <- function(count_df_long, merged_sgRNA_df, percentage_kept_controls = 0.2){
+  
+  percentage_used_controls = 1 - percentage_kept_controls
+  
+  # Merge count_df_long with merged_sgRNA_df to include 'entrez'
+  count_df_long_merged <- merge(count_df_long, merged_sgRNA_df[, c("sgrna_id", "entrez")], 
+                                by.x = "sgRNA", by.y = "sgrna_id", 
+                                all.x = TRUE)
+  
+  # Filter out the "targeting" group
+  count_df_long_merged <- count_df_long_merged %>%
+    filter(group_category != "targeting")
+  
+  # Select only unique sgRNA entries (no duplicates) for subsampling
+  unique_entries <- unique(count_df_long_merged$sgRNA)
+  
+  # Randomly assign TRUE/FALSE based on percentage_kept_controls
+  assignments <- sample(c(TRUE, FALSE), length(unique_entries), 
+                       prob = c(percentage_kept_controls, percentage_used_controls), replace = TRUE)
+  
+  # Create a data frame that maps unique sgRNAs to their keep assignments
+  assignment_map <- data.frame(sgRNA = unique_entries, keep = assignments)
+  
+  # Merge assignment_map with the original count_df_long
+  return_df <- count_df_long %>%
+    left_join(assignment_map, by = "sgRNA") %>%
+    mutate(
+      # Change group_category based on keep and conditions
+      group_category = ifelse(keep == TRUE & group_category != "targeting", "kept_control", group_category)
+    ) %>%
+    select(-keep)  # Drop the 'keep' column after mutation
+  
+  return(return_df)
+}
 
+count_df_long_to_wide <- function(count_df_long,
+                                  print = TRUE,
+                                  drop_0s = TRUE,
+                                  recover_input = FALSE,
+                                  for_sum = FALSE){
+  if (print == TRUE){
+    print(paste("NAs in count_df_long:",sum(is.na(count_df_long))))
+  }
+  if (for_sum == TRUE){
+    # recover_input <- FALSE
+  }
+  maude_counts_df <- count_df_long %>%
+    mutate(isNontargeting = ifelse(group_category %in% ctrl_selection, T, F)) %>%  
+    select(-c(group_category)) %>%
+    pivot_wider(names_from = condition, values_from = count) %>%
+    mutate(
+      upper = ifelse(is.na(upper) & !is.na(lower), 0, upper), # Replace NA in upper with 0
+      lower = ifelse(is.na(lower) & !is.na(upper), 0, lower)  # Replace NA in lower with 0
+    ) %>% 
+    as.data.frame()
+  if (print == TRUE){
+    print(paste("Dimension of wide_df:",dim(maude_counts_df)))
+    print(paste("NA's in maude_counts_df:", sum(is.na(maude_counts_df))))
+    print(paste("NA's in Input:", sum(is.na(maude_counts_df$input))))
+    print(paste("NA's in Upper:", sum(is.na(maude_counts_df$upper))))
+    print(paste("NA's in Lower:", sum(is.na(maude_counts_df$lower))))
+  } 
+  
+  if (recover_input == TRUE){
+    # Step 2: Impute 'input' values where both upper and lower exist
+    # First, compute the average input for each sgRNA from non-NA values
+    input_means <- maude_counts_df %>%
+      group_by(sgRNA, sublib) %>%
+      summarize(mean_input = mean(input, na.rm = TRUE), .groups = "drop")
+    
+    # Step 3: Join back the means and impute missing 'input' values if upper and lower exist
+    maude_counts_df <- maude_counts_df %>%
+      left_join(input_means, by = c("sgRNA","sublib")) %>%
+      mutate(
+        input = ifelse(is.na(input) & !is.na(upper) & !is.na(lower), mean_input, input)
+      ) %>%
+      select(-mean_input)  # clean up
+  } else {
+    if (for_sum == FALSE){
+      maude_counts_df <- maude_counts_df %>% 
+      drop_na() # Drop any row with NA that were introduced by pivot wider
+    }
+  }
+  
+  if (drop_0s == TRUE){
+    maude_counts_df <- maude_counts_df %>%
+      filter(!(input == 0 & upper == 0 & lower == 0))
+  }
+  
+  if (for_sum == FALSE){
+    maude_counts_df <- maude_counts_df %>% 
+      mutate(input = input + 1,
+             upper = upper + 1,
+             lower = lower + 1)
+  }
+
+  if (print == TRUE){
+    print(paste("Dimension of wide_df:",dim(maude_counts_df)))
+    print(paste("NA's in maude_counts_df:", sum(is.na(maude_counts_df))))
+    print(paste("NA's in Input:", sum(is.na(maude_counts_df$input))))
+    print(paste("NA's in Upper:", sum(is.na(maude_counts_df$upper))))
+    print(paste("NA's in Lower:", sum(is.na(maude_counts_df$lower))))
+  }
+  # MAUDE seems to not like floats, so we round to integers
+  # TO DO: check how I can make maude use floats.
+  maude_counts_df <- maude_counts_df %>% 
+    mutate(input = round(input),
+           lower = round(lower),
+           upper = round(upper))
+  return(maude_counts_df)
+}
+
+if (subsample_controls == TRUE){
+  # count_df_long_old <- subsample_controls_func_old(count_df_long, merged_sgRNA_df)
+  count_df_long <- subsample_controls_func(count_df_long, merged_sgRNA_df)
+}
+
+if (!(norm_method %in% c("","control_median"))){
+  stop("Error: 'norm_method' must be one of '', 'control_median'. The script will now stop.")
+}
+if (norm_method == "control_median"){
+  count_df_long <- normalize_count_df_long(count_df_long,
+                                           norm_method = norm_method)
+}
+
+
+  
+maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
+                                         print = FALSE,
+                                         drop_0s = drop_0s,
+                                         recover_input = recover_input)
+if (!(method %in% c("","rep","sum",'rep_sample','rep_sublib'))){
+  stop("Error: 'method' must be one of '', 'rep', 'rep_sample', 'rep_sublib', or 'sum'. The script will now stop.")
+}
+
+if (method == ""){
+  maude_counts_df <- maude_counts_df %>% 
+    mutate(exp = "rep1")
+}
+if (method == "rep"){
+
+}
+if (method == "rep_sample"){
+  maude_counts_df <- maude_counts_df %>%
+    mutate(exp = sample)
+}
+if (method == "rep_sublib"){
+  maude_counts_df <- maude_counts_df %>%
+    mutate(exp = sublib)
+}
+if (method == "sum"){
+  maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
+                                         print = FALSE,
+                                         drop_0s = drop_0s,
+                                         recover_input = TRUE,
+                                         for_sum = TRUE)
+  # Group by sgRNA and summarize the required columns
+  maude_counts_df <- maude_counts_df %>%
+    group_by(sgRNA, sublib) %>%
+    summarize(
+      input = pmax(sum(input, na.rm = TRUE), 0),  # Sum and ensure minimum is 0
+      upper = pmax(sum(upper, na.rm = TRUE), 0),  # Sum and ensure minimum is 0
+      lower = pmax(sum(lower, na.rm = TRUE), 0),  # Sum and ensure minimum is 0
+      isNontargeting = dplyr::first(isNontargeting),  # Take the first value of isNontargeting (same for all in the group)
+      .groups = 'drop'  # Drop the group structure after summarizing
+    ) %>%
+    mutate(
+      exp = "rep1",
+      input = input + 1,
+      upper = upper + 1,
+      lower = lower + 1
+    )
+}
+
+if (strict_mode){
+  if (pseudocount_added){
+    umi_threshold <- 2
+  } else {
+    umi_threshold <- 1
+  } 
+  cat("Strict Mode enabled\n")
+  cat("Rows before strict mode: \t", nrow(maude_counts_df),"\n")
+  maude_counts_df <- maude_counts_df %>%
+    filter(if_any(c(input, upper, lower), ~ . <= umi_threshold))
+  cat("Rows after strict mode: \t", nrow(maude_counts_df),"\n")
+}
+if (length(include_controls_list) > 0) {
+  for (control_gene in include_controls_list) {
+    maude_counts_df$isNontargeting[grepl(control_gene, maude_counts_df$sgRNA)] <- FALSE
+  }
+}
+if (exists("use_only_these_controls_list")) {
+  if (length(use_only_these_controls_list) > 0){
+    maude_counts_df$isNontargeting[ !(maude_counts_df$sgRNA %in% use_only_these_controls_list) ] <- FALSE
+  }
+}
+if (combine_samples != ""){
+  if (combine_samples == "sample"){
+    maude_counts_df <- maude_counts_df %>%
+      group_by(sgRNA, sublib) %>%
+      summarise(
+        # set sample name for the combined rows
+        sample = "sample_1",
+        
+        # add up integer count columns
+        input = sum(input, na.rm = TRUE),
+        lower = sum(lower, na.rm = TRUE),
+        upper = sum(upper, na.rm = TRUE),
+        
+        # keep the first value for everything else
+        exp = dplyr::first(exp),
+        isNontargeting = dplyr::first(isNontargeting),
+        
+        # keep one sublib/sgRNA (also fine even though they're grouping keys)
+        .groups = "drop"
+      )
+  }
+  if (combine_samples == "sublib"){
+    maude_counts_df <- maude_counts_df %>%
+      group_by(sgRNA, sample) %>%
+      summarise(
+        # set sample name for the combined rows
+        sublib = "sublib_1",
+        
+        # add up integer count columns
+        input = sum(input, na.rm = TRUE),
+        lower = sum(lower, na.rm = TRUE),
+        upper = sum(upper, na.rm = TRUE),
+        
+        # keep the first value for everything else
+        exp = dplyr::first(exp),
+        isNontargeting = dplyr::first(isNontargeting),
+        
+        # keep one sublib/sgRNA (also fine even though they're grouping keys)
+        .groups = "drop"
+      )    
+  }
+}  
+```
 ## Some exploration options for the raw reads/umi counts
 Mostly for comparing this pipeline to johns bcwithqc, ignore this. 
 ```{r basic_pipeline_comparision, eval=FALSE}
@@ -1129,6 +1411,18 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     select(c(symbol, entrez, numGuides,stoufferZ,meanZ,significanceZ,p.value, FDR, seq, sgRNA)) %>% 
     arrange(significanceZ)
   # Add Liangfus expression data
+  HepG2_cpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_cpm.rds")
+
+  export_df <- export_df %>%
+  left_join(
+    HepG2_cpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             HepG2_CPM_Xie = HepG2,
+             primary_hepato_CPM_Xie = primary),
+    by = c("entrez" = "entrez_id")
+  )
   HepG2_tpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
 
   export_df <- export_df %>%
@@ -1151,9 +1445,9 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
         filter(!is.na(entrez)) %>%
         distinct(entrez, .keep_all = TRUE) %>% 
         select(entrez,
-               HepG2_TPM_Battisti = TPM_WT,
-               HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
-               HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
+               HepG2_CPM_Battisti = CPM_WT,
+               HepG2_14D9_CPM_Battisti = CPM_dual_rep_14D9,
+               HepG2_14B11_CPM_Battisti = CPM_dual_rep_14B11),
       by = "entrez"
       )
 
@@ -2392,11 +2686,11 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
 ```
 
 ``` {r Calculated_replicated_analysis, eval=False}
-high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.2,
+high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                            hits_in_X_reps = 16,
                                                            correlation_heatmap = FALSE,
                                                            venn_diagram = FALSE)
-inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.2,
+inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                      hits_in_X_reps = 10,
                                                      correlation_heatmap = FALSE,
                                                      venn_diagram = FALSE)
@@ -3184,7 +3478,7 @@ cor_plots <- imap(cors_by_condition, ~plot_cor_heatmap(.x, title = paste("Correl
 walk(cor_plots, print)
 ```
 
-``` {r Liangfu_Plots, eval=FALSE}
+``` {r Liangfu_Plots_1, eval=FALSE}
 library(dplyr)
 library(ggplot2)
 
@@ -3301,4 +3595,128 @@ for (i in seq_len(nrow(groups))) {
   print(p)
 }
 
+```
+
+``` {r Liangfu_Plots_1, eval=FALSE}
+lg2fc_df <- maude_counts_df %>%
+    left_join(merged_sgRNA_df %>% select(sgrna_id, Gene, count), by = c("sgRNA" = "sgrna_id")) %>% 
+  rename(plasmid_count = count) %>% 
+  filter(!isNontargeting)
+
+plot_l2fc_scatter <- function(df,
+                             baseline,
+                             x_axis,
+                             y_axis,
+                             save_image_file_path = NULL,
+                             genes = NULL,
+                             mark_N_special = NULL,
+                             pseudocount = 1e-9) {
+  # Packages used: dplyr, ggplot2, ggrepel, rlang
+  if (!is.data.frame(df)) stop("df must be a data.frame / tibble.")
+  if (!"Gene" %in% names(df)) stop("df must contain a column named 'Gene'.")
+
+  baseline_nm <- rlang::as_string(rlang::ensym(baseline))
+  x_nm        <- rlang::as_string(rlang::ensym(x_axis))
+  y_nm        <- rlang::as_string(rlang::ensym(y_axis))
+
+  missing_cols <- base::setdiff(c(baseline_nm, x_nm, y_nm), names(df))
+  if (length(missing_cols) > 0) {
+    stop("Missing columns in df: ", paste(missing_cols, collapse = ", "))
+  }
+
+  means <- df |>
+    dplyr::group_by(.data$Gene) |>
+    dplyr::summarise(
+      baseline_mean = mean(.data[[baseline_nm]], na.rm = TRUE),
+      x_mean        = mean(.data[[x_nm]],        na.rm = TRUE),
+      y_mean        = mean(.data[[y_nm]],        na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    dplyr::mutate(
+      L2FC_x = log2((x_mean + pseudocount) / (baseline_mean + pseudocount)),
+      L2FC_y = log2((y_mean + pseudocount) / (baseline_mean + pseudocount)),
+      delta  = L2FC_y - L2FC_x
+    )
+
+  genes <- if (is.null(genes)) character(0) else unique(as.character(genes))
+
+  top_genes <- bottom_genes <- character(0)
+  if (!is.null(mark_N_special) && is.finite(mark_N_special) && mark_N_special > 0) {
+    n <- as.integer(mark_N_special)
+    tmp <- means |>
+      dplyr::filter(!is.na(.data$delta))
+
+    top_genes <- tmp |>
+      dplyr::slice_max(.data$delta, n = n, with_ties = FALSE) |>
+      dplyr::pull(.data$Gene)
+
+    bottom_genes <- tmp |>
+      dplyr::slice_min(.data$delta, n = n, with_ties = FALSE) |>
+      dplyr::pull(.data$Gene)
+  }
+
+  plot_df <- means |>
+    dplyr::mutate(
+      category = dplyr::case_when(
+        .data$Gene %in% genes       ~ "highlight",
+        .data$Gene %in% top_genes   ~ "top",
+        .data$Gene %in% bottom_genes~ "bottom",
+        TRUE                        ~ "other"
+      ),
+      label = dplyr::if_else(.data$category == "other", NA_character_, .data$Gene)
+    )
+  
+  print(paste("NAs in L2FC_x:", sum(is.na(means$L2FC_x))))
+  print(paste("NAs in L2FC_y:", sum(is.na(means$L2FC_y))))
+  
+  p <- ggplot2::ggplot(plot_df, ggplot2::aes(x = .data$L2FC_x, y = .data$L2FC_y, color = .data$category)) +
+    ggplot2::geom_point(alpha = 0.8, size = 1.7) +
+    ggrepel::geom_text_repel(
+      ggplot2::aes(label = .data$label),
+      size = 3,
+      max.overlaps = Inf,
+      box.padding = 0.35,
+      point.padding = 0.2,
+      show.legend = FALSE
+    ) +
+    ggplot2::scale_color_manual(values = c(
+      other     = "grey80",
+      top       = "red3",
+      bottom    = "dodgerblue3",
+      highlight = "darkgreen"
+    )) +
+    ggplot2::labs(
+      title = paste0("L2FC vs ", baseline_nm),
+      x = paste0("log2FC(", x_nm, " / ", baseline_nm, ")"),
+      y = paste0("log2FC(", y_nm, " / ", baseline_nm, ")"),
+      color = NULL
+    ) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", colour = "grey70") +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", colour = "grey70") +
+    ggplot2::theme_classic()
+
+  if (!is.null(save_image_file_path) && nzchar(save_image_file_path)) {
+    ggplot2::ggsave(filename = save_image_file_path, plot = p, width = 7, height = 6, dpi = 300)
+  }
+
+  print(p)
+  invisible(list(means = means, plot = p))
+}
+plot_l2fc_scatter(lg2fc_df,
+                 baseline = "input",
+                 x_axis = "upper",
+                 y_axis = "lower",
+                 save_image_file_path = NULL,
+                 genes = c("EGFP","AGO2"),
+                 mark_N_special = 8,
+                 pseudocount = 1e-9)
+  
+plot_l2fc_scatter(lg2fc_df,
+                 baseline = "plasmid_count",
+                 x_axis = "upper",
+                 y_axis = "lower",
+                 save_image_file_path = NULL,
+                 genes = c("EGFP","AGO2"),
+                 mark_N_special = 8,
+                 pseudocount = 1e-9)
 ```

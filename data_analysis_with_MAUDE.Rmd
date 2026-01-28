@@ -17,6 +17,8 @@ library(optparse)
 library(ggrepel)
 library(writexl)
 library(metap) 
+library(depmap)
+library(stringr)
 
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
@@ -27,12 +29,12 @@ conflicts_prefer(dplyr::slice)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- TRUE
+first_time      <- FALSE
 
 # Directories
 # Mandatory output_folder
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -40,7 +42,7 @@ john_folder <- ""
 # If any files are to be skipped list their names here
 
 skip_list <- c() # individual files, example: c("I_L3_5", "U_L1_2")
-skip_list_sublib <- c("L3") # entire sublibraries, example: c("L4","L5")
+skip_list_sublib <- c() # entire sublibraries, example: c("L4","L5")
 skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # Warning: skipping entire sublibraries and sample numbers does not work for
 # non numeric samples, or samples >9999
@@ -69,7 +71,9 @@ method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" o
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- FALSE     # bolean keeps 10% of control sgRNAs for reference.
+use_custom_fraction <- FALSE    # bolean to use custom bin fractions. 
 combine_samples     <- "sample" # can be "", "sample", or "sublib".
+combine_for_gene_stats <- "none" # can be "none", "all", "sample", or "sublib"
 
 
 # Set Fractions for the upper and lower bins
@@ -326,6 +330,10 @@ get_file_path <- function(folder_path, file_name){
   full_path <- gsub("//", "/", full_path, fixed = TRUE)
   return(full_path)
 }
+
+rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
+                    error = function(e) getwd())
+data_dir <- file.path(rmd_dir, "data")
 
 genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
@@ -2031,6 +2039,23 @@ if (first_time == TRUE){
     }
   }
  
+  if (combine_for_gene_stats != "none"){
+    if (!(combine_for_gene_stats %in% c("all","sublib","sample"))){
+      stop("combine_for_gene_stats must be one of: 'all','none','sublib','sample'")
+    }
+    if (combine_for_gene_stats == "all"){
+      maude_guide_stats$exp <- "rep1"
+    }
+    if (combine_for_gene_stats == "sublib"){
+      maude_guide_stats <- maude_guide_stats %>% 
+        mutate(exp = sample)
+    }
+    if (combine_for_gene_stats == "sample"){
+      maude_guide_stats <- maude_guide_stats %>% 
+        mutate(exp = sublib)
+    }    
+  }
+  
   ## calculate gene-level summarized scores
   maude_gene_stats <- getElementwiseStats(
     experiments = unique(maude_guide_stats['exp']),
@@ -2083,7 +2108,19 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     select(c(symbol, entrez, numGuides,stoufferZ,meanZ,significanceZ,p.value, FDR, seq, sgRNA)) %>% 
     arrange(significanceZ)
   # Add Liangfus expression data
-  HepG2_tpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
+  HepG2_cpm_Xie <- readRDS(file.path(data_dir, "Xie_hepato_df_cpm_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    HepG2_cpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             HepG2_CPM_Xie = HepG2,
+             primary_hepato_CPM_Xie = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  HepG2_tpm_Xie <- readRDS(file.path(data_dir, "Xie_hepato_df_tpm_RNAseq.rds"))
 
   export_df <- export_df %>%
   left_join(
@@ -2097,7 +2134,7 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
   )
   
   # Add Nicos HepG2 RNAseq expression data
-  HepG2_tpm_Battisti <- readRDS("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
+  HepG2_tpm_Battisti <- readRDS(file.path(data_dir, "Battisti_HepG2_dual_rep_RNAseq.rds"))
   
   export_df <- export_df %>%
     left_join(
@@ -2105,32 +2142,68 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
         filter(!is.na(entrez)) %>%
         distinct(entrez, .keep_all = TRUE) %>% 
         select(entrez,
-               HepG2_TPM_Battisti = TPM_WT,
-               HepG2_14D9_TPM_Battisti = TPM_dual_rep_14D9,
-               HepG2_14B11_TPM_Battisti = TPM_dual_rep_14B11),
+               HepG2_CPM_Battisti = CPM_WT,
+               HepG2_14D9_CPM_Battisti = CPM_dual_rep_14D9,
+               HepG2_14B11_CPM_Battisti = CPM_dual_rep_14B11),
       by = "entrez"
       )
 
-  # Add information about essential genes
-  essential_df <- read.delim(
-    "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/essential_genes.txt",
-    header = FALSE,
-    sep = "\t",
-    stringsAsFactors = FALSE
-  ) %>%
-    setNames(c("symbol", "entrez")) %>%   # naming as you requested
-    mutate(entrez = sub("^HGNC:", "", entrez))  # remove "HGNC:"
+  # Add information about essential genes (no cardiomyocytes so far)
+  essential_df <- readRDS(file.path(data_dir, "dependency_df.rds")) %>%
+    mutate(entrez = as.character(entrez_id)) %>% 
+    select(-c(gene_symbol,entrez_id))
 
   export_df <- export_df %>%
-  mutate(
-    essential = if_else(
-      as.character(entrez) %in% as.character(essential_df$entrez),
-      "Yes",
-      "No",
-      missing = "No"
-    )
-  )
+    left_join(essential_df, by = "entrez")
   
+  cardio_cpm_Xie <- readRDS(file.path(data_dir, "Xie_cardio_df_cpm_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_cpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             cardio_IPSC_CPM = IPS_d,
+             cardio_primary_CPM = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  cardio_tpm_Xie <- readRDS(file.path(data_dir, "Xie_cardio_df_tpm_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_tpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             cardio_IPSC_TPM = IPS_d,
+             cardio_primary_TPM = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  cardio_cpm_Xie_Liangfu_own_data <- readRDS(file.path(data_dir, "Xie_cardio_df_cpm_Liangfus_own_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_cpm_Xie_Liangfu_own_data %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>%
+      mutate(both = rowMeans(across(c(Xie_CM_Rep_1, Xie_CM_Rep_2)), na.rm = TRUE)) %>% 
+      select(entrez_id,
+             cardio_IPSC_CPM_Xie = both),
+    by = c("entrez" = "entrez_id")
+  )
+  cardio_tpm_Xie_Liangfus_own_data <- readRDS(file.path(data_dir, "Xie_cardio_df_tpm_Liangfus_own_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_tpm_Xie_Liangfus_own_data %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>%
+      mutate(both = rowMeans(across(c(Xie_CM_Rep_1, Xie_CM_Rep_2)), na.rm = TRUE)) %>% 
+      select(entrez_id,
+             cardio_IPSC_TPM_Xie = both),
+    by = c("entrez" = "entrez_id")
+  )
   return(export_df)
 }
 
@@ -2462,4 +2535,6 @@ write_xlsx(export_df, excel_file_path)
 csv_file_path <- sub(".rds",".csv",paste0(results_output_folder, "/", "Counts", file_suffix))
 write_csv(maude_counts_df, csv_file_path)
 ```
+
+
 

@@ -290,6 +290,12 @@ calc_tpm <- function(counts, gene_length_bp) {
   tpm <- rpk / (sum(rpk, na.rm = TRUE) / 1e6)              # per million scaling
   return(tpm)
 }
+# CPM function (counts normalized by library size only)
+calc_cpm <- function(counts) {
+  lib_size <- sum(counts, na.rm = TRUE)
+  cpm <- counts / (lib_size / 1e6)
+  return(cpm)
+}
 cols <- c("WT_NT_R1", "WT_NT_R2",
           "14D9_NT_R1", "14D9_NT_R2",
           "14B11_NT_R1", "14B11_NT_R2")
@@ -306,6 +312,13 @@ comb_annot_tpkm_df <- comb_annot_df %>%
       all_of(c(cols, "WT", "dual_rep_14D9", "dual_rep_14B11")),
       ~ calc_tpm(.x, gene_length),
       .names = "TPM_{.col}"
+    )
+  ) %>%
+  mutate(
+    across(
+      all_of(c(cols, "WT", "dual_rep_14D9", "dual_rep_14B11")),
+      ~ calc_cpm(.x),
+      .names = "CPM_{.col}"
     )
   )
 saveRDS(comb_annot_tpkm_df, "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
