@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J RRMA_GAL     # Job Name                # chmod +x /home/link/Run_R_markdown_array.sh
+#SBATCH -J RRMA_GALNAC     # Job Name                # chmod +x /home/link/Run_R_markdown_array.sh
 #SBATCH -A lsteinme             # profile of the group                # sbatch ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/Run_R_markdown_array.sh   
 #SBATCH --mem 6g               # Total memory required for the job    # sbatch --dependency=afterok:24467230 /home/link/Run_R_markdown.sh
 #SBATCH -N 1                    # Number of nodes
@@ -66,10 +66,11 @@ if [ "$DIFFERENT_OR_SAME" == "same" ]; then
   
   if [ "$SAME_OPTIONS" == "replicates" ]; then
   
+    # OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
     OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
     
     PIPELINE="lukas"
-    METHOD=""
+    METHOD="sum"
     DATA_TYPE="reads"
     NORM_METHOD="control_median"
     EXTRA_SUFFIX="rep$((i+1))"
@@ -88,8 +89,11 @@ ml Pandoc
 ml texlive
 ml ICU
 
-export R_LIBS_USER="/home/link/R/x86_64-pc-linux-gnu-library/4.4"
-export R_LIBS_USER="/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/4.4.2/MAUDE"
+unset R_LIBS
+unset R_LIBS_SITE
+# export R_LIBS_USER="/home/link/R/x86_64-pc-linux-gnu-library/4.4"
+# export R_LIBS_USER="/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/4.4.2/MAUDE"
+export R_LIBS_USER=/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/glibc-2.28/R-4.4.2
 
 # Make sure temp dir exists
 mkdir -p /scratch/link/temp
