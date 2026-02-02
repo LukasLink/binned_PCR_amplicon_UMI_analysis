@@ -32,7 +32,7 @@ first_time      <- FALSE
 # Directories
 # Mandatory output_folder
 output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/COR"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
 
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -52,7 +52,7 @@ include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19",
 # Only Specific controls
 # Liangfu wants only these controls to be used:
 # Liangfu iBeer Screen
-if (TRUE){
+if (FALSE){
   include_controls_list <- c()
   use_only_these_controls_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Liangfu_Non_targeting_sgRNA_list_Genomewide_Daniel Lib.csv"
   use_only_these_controls_list <- read.csv(use_only_these_controls_path, header = FALSE, stringsAsFactors = FALSE)$V1
@@ -328,6 +328,7 @@ get_file_path <- function(folder_path, file_name){
 rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
                     error = function(e) getwd())
 data_dir <- file.path(rmd_dir, "data")
+data_dir <- sub("auxiliary_scripts/", "", data_dir)
 
 genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
@@ -1411,7 +1412,7 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     select(c(symbol, entrez, numGuides,stoufferZ,meanZ,significanceZ,p.value, FDR, seq, sgRNA)) %>% 
     arrange(significanceZ)
   # Add Liangfus expression data
-  HepG2_cpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_cpm.rds")
+  HepG2_cpm_Xie <- readRDS(file.path(data_dir, "Xie_hepato_df_cpm_RNAseq.rds"))
 
   export_df <- export_df %>%
   left_join(
@@ -1423,7 +1424,7 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
              primary_hepato_CPM_Xie = primary),
     by = c("entrez" = "entrez_id")
   )
-  HepG2_tpm_Xie <- readRDS("/g/steinmetz/link/Liangfu_Expression_Heatmaps/rds_files/hepato_df_tpm.rds")
+  HepG2_tpm_Xie <- readRDS(file.path(data_dir, "Xie_hepato_df_tpm_RNAseq.rds"))
 
   export_df <- export_df %>%
   left_join(
@@ -1437,7 +1438,7 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
   )
   
   # Add Nicos HepG2 RNAseq expression data
-  HepG2_tpm_Battisti <- readRDS("/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Nico_HepG2_dual_rep_RNAseq/Nico_HepG2_dual_rep_RNAseq.rds")
+  HepG2_tpm_Battisti <- readRDS(file.path(data_dir, "Battisti_HepG2_dual_rep_RNAseq.rds"))
   
   export_df <- export_df %>%
     left_join(
@@ -1451,26 +1452,62 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
       by = "entrez"
       )
 
-  # Add information about essential genes
-  essential_df <- read.delim(
-    "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/essential_genes.txt",
-    header = FALSE,
-    sep = "\t",
-    stringsAsFactors = FALSE
-  ) %>%
-    setNames(c("symbol", "entrez")) %>%   # naming as you requested
-    mutate(entrez = sub("^HGNC:", "", entrez))  # remove "HGNC:"
+  # Add information about essential genes (no cardiomyocytes so far)
+  essential_df <- readRDS(file.path(data_dir, "dependency_df.rds")) %>%
+    mutate(entrez = as.character(entrez_id)) %>% 
+    select(-c(gene_symbol,entrez_id))
 
   export_df <- export_df %>%
-  mutate(
-    essential = if_else(
-      as.character(entrez) %in% as.character(essential_df$entrez),
-      "Yes",
-      "No",
-      missing = "No"
-    )
-  )
+    left_join(essential_df, by = "entrez")
   
+  cardio_cpm_Xie <- readRDS(file.path(data_dir, "Xie_cardio_df_cpm_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_cpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             cardio_IPSC_CPM = IPS_d,
+             cardio_primary_CPM = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  cardio_tpm_Xie <- readRDS(file.path(data_dir, "Xie_cardio_df_tpm_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_tpm_Xie %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>% 
+      select(entrez_id,
+             cardio_IPSC_TPM = IPS_d,
+             cardio_primary_TPM = primary),
+    by = c("entrez" = "entrez_id")
+  )
+  cardio_cpm_Xie_Liangfu_own_data <- readRDS(file.path(data_dir, "Xie_cardio_df_cpm_Liangfus_own_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_cpm_Xie_Liangfu_own_data %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>%
+      mutate(both = rowMeans(across(c(Xie_CM_Rep_1, Xie_CM_Rep_2)), na.rm = TRUE)) %>% 
+      select(entrez_id,
+             cardio_IPSC_CPM_Xie = both),
+    by = c("entrez" = "entrez_id")
+  )
+  cardio_tpm_Xie_Liangfus_own_data <- readRDS(file.path(data_dir, "Xie_cardio_df_tpm_Liangfus_own_RNAseq.rds"))
+
+  export_df <- export_df %>%
+  left_join(
+    cardio_tpm_Xie_Liangfus_own_data %>%
+      filter(!is.na(entrez_id)) %>%
+      distinct(entrez_id, .keep_all = TRUE) %>%
+      mutate(both = rowMeans(across(c(Xie_CM_Rep_1, Xie_CM_Rep_2)), na.rm = TRUE)) %>% 
+      select(entrez_id,
+             cardio_IPSC_TPM_Xie = both),
+    by = c("entrez" = "entrez_id")
+  )
   return(export_df)
 }
 
@@ -2688,7 +2725,7 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
 ``` {r Calculated_replicated_analysis, eval=False}
 high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                            hits_in_X_reps = 16,
-                                                           correlation_heatmap = FALSE,
+                                                           correlation_heatmap = TRUE,
                                                            venn_diagram = FALSE)
 inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                      hits_in_X_reps = 10,
@@ -2721,7 +2758,7 @@ if (FALSE){
 automate_subsample_comparison(FDR_threshold = 0.05)
 ```
 
-``` {r control_distribution_heatmap, eval=TRUE}
+``` {r control_distribution_heatmap, eval=FALSE}
 library(pheatmap)
 library(grid)
 # 1) Add RPM per (condition, sublib, sample)
@@ -2805,6 +2842,263 @@ for (k in seq_along(heatmap_chunks)) {
 
 grDevices::dev.off()
 
+
+```
+
+``` {r input_vs_plasmid_function, eval=TRUE}
+scatter_merged_vs_input <- function(
+  merged_sgRNA_df,
+  count_df_long,
+  normalization = c("none", "CPM"),
+  group_category = "all",                 # "all" or c("entry1","entry2")
+  condition_value = "input",
+  sgrna_col_long = "sgRNA",
+  sgrna_col_merged = "sgrna_id",
+  count_col_long = "count",
+  count_col_merged = "count",
+  group_col = "group_category",
+  condition_col = "condition",
+  sample_col_long = "sample",             # optional; improves CPM
+  sublib_col = "sublib",
+  sublib_chosen = "all",
+  transform = c("none", "log10", "log1p"),
+  add_lm = TRUE,
+  annotate_cor = TRUE,
+  mark_outlier = TRUE,
+  n_outliers = 10,
+  symbol_col_merged = "symbol",           # used for labels; fall back to sgrna_id if missing/NA
+  point_alpha = 0.5,
+  point_size = 1,
+  mark_essential = TRUE,
+  essential_col_merged = "is_essential",
+  essential_color = "red",
+  essential_alpha = 0.9,
+  essential_size = NULL,
+  remove_essential = FALSE
+) {
+  normalization <- match.arg(normalization)
+  transform <- match.arg(transform)
+
+  stopifnot(
+    all(c(sgrna_col_long, count_col_long, group_col, condition_col) %in% colnames(count_df_long)),
+    all(c(sgrna_col_merged, count_col_merged) %in% colnames(merged_sgRNA_df))
+  )
+  if (!is.null(sample_col_long) && !(sample_col_long %in% colnames(count_df_long))) {
+    stop("sample_col_long was provided but is not a column in count_df_long.")
+  }
+
+  # 1) filter to input + group_category selection
+  df_in <- count_df_long %>%
+    filter(.data[[condition_col]] == .env$condition_value)
+
+  n_before <- nrow(df_in)
+  if (!(length(group_category) == 1 && group_category == "all")) {
+    df_in <- df_in %>%
+      filter(.data[[group_col]] %in% .env$group_category)
+  }
+  n_after <- nrow(df_in)
+  message("Rows before/after group filter: ", n_before, " -> ", n_after)
+  
+  n_before <- nrow(df_in)
+  if (!(length(sublib_chosen) == 1 && sublib_chosen == "all")) {
+    df_in <- df_in %>%
+      filter(.data[[sublib_col]] %in% .env$sublib_chosen)
+  }
+  n_after <- nrow(df_in)
+  message("Rows before/after sublibrary filter: ", n_before, " -> ", n_after)
+  
+  
+  
+  essential_df <- readRDS(file.path(data_dir, "dependency_df.rds")) %>%
+    mutate(entrez = as.character(entrez_id)) %>%
+    select(-c(gene_symbol, entrez_id)) %>%
+    mutate(
+      is_essential = if_any(
+        c(essential_HepG2, essential_general, essential_liver),
+        ~ tidyr::replace_na(.x, FALSE)
+      )
+    )
+  
+  merged_sgRNA_df <- merged_sgRNA_df %>%
+    mutate(entrez = as.character(entrez)) %>%   # ensure same type for join
+    left_join(essential_df, by = "entrez")
+  
+  # 2) normalize (optional) then mean per sgRNA
+  if (normalization == "CPM") {
+    if (!is.null(sample_col_long)) {
+      df_in <- df_in %>%
+        group_by(.data[[sample_col_long]]) %>%
+        mutate(.cpm = (.data[[count_col_long]] / sum(.data[[count_col_long]], na.rm = TRUE)) * 1e6) %>%
+        ungroup()
+
+      in_sum <- df_in %>%
+        group_by(.data[[sgrna_col_long]]) %>%
+        summarise(input_mean = mean(.cpm, na.rm = TRUE), .groups = "drop")
+    } else {
+      total <- sum(df_in[[count_col_long]], na.rm = TRUE)
+      df_in <- df_in %>% mutate(.cpm = (.data[[count_col_long]] / total) * 1e6)
+
+      in_sum <- df_in %>%
+        group_by(.data[[sgrna_col_long]]) %>%
+        summarise(input_mean = mean(.cpm, na.rm = TRUE), .groups = "drop")
+    }
+
+    merged_plot_df <- merged_sgRNA_df %>%
+      mutate(merged_value = (.data[[count_col_merged]] / sum(.data[[count_col_merged]], na.rm = TRUE)) * 1e6)
+  } else {
+    in_sum <- df_in %>%
+      group_by(.data[[sgrna_col_long]]) %>%
+      summarise(input_mean = mean(.data[[count_col_long]], na.rm = TRUE), .groups = "drop")
+
+    merged_plot_df <- merged_sgRNA_df %>%
+      mutate(merged_value = .data[[count_col_merged]])
+  }
+
+  # Build label: prefer symbol, fall back to sgrna_id; if symbol col missing, use sgrna_id
+  has_symbol <- !is.null(symbol_col_merged) && (symbol_col_merged %in% colnames(merged_plot_df))
+  merged_plot_df <- merged_plot_df %>%
+    mutate(.label = if (has_symbol) {
+      dplyr::coalesce(as.character(.data[[symbol_col_merged]]),
+                     as.character(.data[[sgrna_col_merged]]))
+    } else {
+      as.character(.data[[sgrna_col_merged]])
+    })
+
+  # 3) join (match sgRNA ids) — use all_of() in tidyselect contexts
+  in_sum2 <- in_sum %>%
+    rename(sgrna_id_join = all_of(sgrna_col_long))
+
+  merged_min <- merged_plot_df %>%
+    select(all_of(c(sgrna_col_merged, "merged_value", ".label")),
+           any_of(essential_col_merged)) %>%                # safe if column missing
+    rename(sgrna_id_join = all_of(sgrna_col_merged)) %>%
+    mutate(.essential = dplyr::coalesce(.data[[essential_col_merged]], FALSE))
+
+
+  joined <- in_sum2 %>% inner_join(merged_min, by = "sgrna_id_join")
+  
+  if (remove_essential){
+    joined <- joined %>% filter(!is_essential)
+  }
+  
+  if (nrow(joined) == 0) {
+    stop("Join produced 0 rows. Check that sgRNA IDs match between the two data frames.")
+  }
+
+  # Fit LM once (needed for outlier distances and optionally for drawing the line)
+  fit <- lm(input_mean ~ merged_value, data = joined)
+  b <- unname(coef(fit)[["(Intercept)"]])
+  m <- unname(coef(fit)[["merged_value"]])
+
+  # Perpendicular distance from point to line y = m x + b:
+  # distance = | -m*x + y - b | / sqrt(m^2 + 1)
+  if (mark_outlier) {
+    joined <- joined %>%
+      mutate(.dist = abs((-m) * merged_value + input_mean - b) / sqrt(m^2 + 1))
+  
+    n_keep <- min(n_outliers, nrow(joined))
+  
+    outliers <- joined %>%
+      arrange(desc(.dist)) %>%
+      slice_head(n = n_keep)
+  }
+
+  # 4) plot
+  p <- ggplot(joined, aes(x = merged_value, y = input_mean)) +
+    geom_point(alpha = point_alpha, size = point_size) +
+    labs(
+      x = paste0("plasmid count", ifelse(normalization == "CPM", " (CPM)", "")),
+      y = paste0("mean input ", count_col_long, ifelse(normalization == "CPM", " (CPM)", "")),
+      title = paste(
+        "Plasmid counts vs mean input counts for",
+        paste(group_category, collapse = ", "),
+        "Norm:", normalization
+      )
+    ) +
+    theme_classic()
+
+
+  if (transform == "log10") {
+    p <- p + scale_x_log10() + scale_y_log10()
+  } else if (transform == "log1p") {
+    p <- p + scale_x_continuous(trans = "log1p") + scale_y_continuous(trans = "log1p")
+  }
+
+  if (annotate_cor) {
+    r <- suppressWarnings(cor(joined$merged_value, joined$input_mean, use = "pairwise.complete.obs"))
+    p <- p + annotate(
+      "text",
+      x = Inf, y = Inf, hjust = 1.1, vjust = 1.2,
+      label = sprintf("Pearson r = %.3f\nn = %d", r, nrow(joined))
+    )
+  }
+
+  # label top outliers
+  if (mark_outlier && nrow(outliers) > 0) {
+    if (requireNamespace("ggrepel", quietly = TRUE)) {
+      p <- p + ggrepel::geom_text_repel(
+        data = outliers,
+        aes(label = .label),
+        max.overlaps = Inf
+      )
+    } else {
+      p <- p + geom_text(
+        data = outliers,
+        aes(label = .label),
+        vjust = -0.5,
+        check_overlap = TRUE
+      )
+    }
+  }
+  if (mark_essential) {
+    if (is.null(essential_size)) essential_size <- point_size
+    p <- p + geom_point(
+      data = dplyr::filter(joined, .essential),
+      aes(x = merged_value, y = input_mean),
+      color = essential_color,
+      alpha = essential_alpha,
+      size = essential_size
+    )
+  }
+    # draw LM line (using the same fit we used for distances)
+  if (add_lm) {
+    p <- p + geom_abline(intercept = b, slope = m, color = "blue")
+  }
+  
+  print(p)
+  list(plot = p, data = joined)
+}
+
+```
+
+```{r input_vs_plasmid, eval=FALSE}
+res <- scatter_merged_vs_input(merged_sgRNA_df, count_df_long,
+                               normalization = "CPM",
+                               group_category = "all",
+                               point_size = 0.5)
+res <- scatter_merged_vs_input(merged_sgRNA_df, count_df_long,
+                               normalization = "CPM",
+                               group_category = "all",
+                               remove_essential = TRUE,
+                               point_size = 0.5)
+
+res <- scatter_merged_vs_input(merged_sgRNA_df, count_df_long,
+                               normalization = "CPM",
+                               group_category = c("targeting"),
+                               sublib_chosen = "sublib_4",
+                               point_size = 0.5)
+res <- scatter_merged_vs_input(merged_sgRNA_df, count_df_long,
+                               normalization = "CPM",
+                               group_category = c("non_targeting_control"),
+                               sublib_chosen = "sublib_4",
+                               mark_outlier = FALSE,
+                               point_size = 0.5)
+res <- scatter_merged_vs_input(merged_sgRNA_df, count_df_long,
+                               normalization = "none",
+                               group_category = c("non_targeting_control"),
+                               sublib_chosen = "sublib_4",
+                               mark_outlier = FALSE,
+                               point_size = 0.5)
 
 ```
 
@@ -3603,6 +3897,8 @@ lg2fc_df <- maude_counts_df %>%
   rename(plasmid_count = count) %>% 
   filter(!isNontargeting)
 
+
+
 plot_l2fc_scatter <- function(df,
                              baseline,
                              x_axis,
@@ -3702,7 +3998,7 @@ plot_l2fc_scatter <- function(df,
   print(p)
   invisible(list(means = means, plot = p))
 }
-plot_l2fc_scatter(lg2fc_df,
+vs_input <- plot_l2fc_scatter(lg2fc_df,
                  baseline = "input",
                  x_axis = "upper",
                  y_axis = "lower",
@@ -3711,7 +4007,7 @@ plot_l2fc_scatter(lg2fc_df,
                  mark_N_special = 8,
                  pseudocount = 1e-9)
   
-plot_l2fc_scatter(lg2fc_df,
+vs_plasmid <- plot_l2fc_scatter(lg2fc_df,
                  baseline = "plasmid_count",
                  x_axis = "upper",
                  y_axis = "lower",
@@ -3719,4 +4015,9 @@ plot_l2fc_scatter(lg2fc_df,
                  genes = c("EGFP","AGO2"),
                  mark_N_special = 8,
                  pseudocount = 1e-9)
+
+csv_file_path <- get_file_path(results_output_folder,"L2FC_vs_input.csv")
+write_csv(vs_input$means, csv_file_path)
+csv_file_path <- get_file_path(results_output_folder,"L2FC_vs_plasmid.csv")
+write_csv(vs_plasmid$means, csv_file_path)
 ```
