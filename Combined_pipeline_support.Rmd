@@ -29,9 +29,9 @@ conflicts_prefer(dplyr::select)
 # User Options
 ################################################################################
 
-output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
+output_folder <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 first_time <- TRUE
-library_source <- "six_sublib_whole_genome" # can be lukas_custom or six_sublib_whole_genome
+library_source <- "lukas_custom" # can be lukas_custom or six_sublib_whole_genome
 ################################################################################
 # End of User Options
 ################################################################################
@@ -73,7 +73,7 @@ rds_output_folder <- make_clean_dir(output_folder, "/rds/")
 ## Checking sequences to prepare for reference building
 Change the raw_path to the path where your fastq file is located, and then then run the read_raw block to have a look at your reads. This will also tell you the most common read length, which will be used for calculating SJDB_OVERHANG.
 ```{r read_raw, eval=FALSE}
-raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Liangfu_iBeer_2/Atto/I_L1_1.fastq.gz"
+raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January/QC_filtered/I_L1_FRESHR1.fastq.gz"
 # raw_path = "/g/steinmetz/STOCKS/Data/Assay/sequencing/2025/2025-12-21-222F7TMNX/222F7TMNX_LX_iBeer_round2_25s001568-1-1_Kaiser_lane1HCSSubset5CR12ndpositive_sequence.txt.gz"
 
 fastq_reader <- FastqStreamer(raw_path, n = 1000000)
@@ -109,7 +109,7 @@ If you are using the HD whole genome sgRNA library, in the load_tables block, si
 ```{r load_tables}
 
 if (library_source == "six_sublib_whole_genome"){
-  remove_these_sublibraries = c("ICS_2","ICS_4","ICS_6") #Set sublibraries to be removed
+  remove_these_sublibraries = c("ICS_3","ICS_4","ICS_5","ICS_6") #Set sublibraries to be removed
 
   if (first_time == TRUE){
     sgRNA_df <- read_excel(six_sublib_whole_genome_file_path)  # Reads the first sheet by default
@@ -182,14 +182,15 @@ Generate the reference.fasta file, which will be used by STAR.
 
 if (library_source == "six_sublib_whole_genome"){
   # Nico HepG2 screens  
-  # NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGAAACAGCATAGCAAGTTTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACC"))
+  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("TTCCGATCTTCTTGTGGAAAGGACGAAACACCG", seq, "gtttaagagctatgctggaaacagcatagcaagttTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCttttttaaGCTTGGCGTAACTAGATCTTGAGACACGATCG"))
   # Liangfu iBeer_2 screens
-  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("ggctttatatatcttgtggaaaggacgaaacaccg",seq, "gttttagagct"))
+  # NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("ggctttatatatcttgtggaaaggacgaaacaccg",seq, "gttttagagct"))
 }
 if (library_source == "lukas_custom"){
   # NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0(seq, "GTTTAAGAGCTATGCTGGA",barcode,"AACAGCATAGCAAGTTTAAA"))
   # David_endo
-  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("TACGATCGATGGTCCAGAGCTTTATATATCTTGTGCAAAGGGCGAAACACCG",seq))
+  # NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("TACGATCGATGGTCCAGAGCTTTATATATCTTGTGCAAAGGGCGAAACACCG",seq))
+  NOPE_sgRNA_df <- merged_sgRNA_df %>% mutate(full_oligo = paste0("TTCCGATCTTCTTGTGGAAAGGACGAAACACCG", seq, "gtttaagagctatgctggaaacagcatagcaagttTAAATAAGGCTAGTCCGTTATCAACTTGAAAAAGTGGCACCGAGTCGGTGCttttttaaGCTTGGCGTAACTAGATCTTGAGACACGATCG"))
 }
 build_ref_df = function(df) {
   ref_df <- df %>%
@@ -1102,5 +1103,50 @@ bind_rows(
   arrange(set, desc(control_fraction))
 
 ```
+```{r}
+dir <- "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/HepG2_resequence_26_01_30"
 
+files <- list.files(dir, pattern = "\\.fastq\\.gz$", full.names = TRUE)
 
+# Parse A_B_C_D_E.fastq.gz  (5 underscore-separated fields before .fastq.gz)
+m <- regexec("^([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)\\.fastq\\.gz$", basename(files))
+parts <- regmatches(basename(files), m)
+
+ok <- lengths(parts) > 0
+if (!all(ok)) {
+  warning("Some files don't match A_B_C_D_E.fastq.gz pattern:\n",
+          paste(basename(files)[!ok], collapse = "\n"))
+}
+
+parts_ok <- parts[ok]
+
+new_base <- vapply(parts_ok, function(x) {
+  A <- x[2]; B <- x[3]; C <- x[4]; D <- x[5]
+  paste0(B, "_", A, "_", C, D, ".fastq.gz")   # B_A_CD.fastq.gz
+}, character(1))
+
+old_full <- files[ok]
+new_full <- file.path(dir, new_base)
+
+# ---- DRY RUN ----
+cat("DRY RUN (no changes made):\n")
+for (i in seq_along(old_full)) {
+  cat(basename(old_full[i]), " -> ", basename(new_full[i]), "\n", sep = "")
+}
+
+# Safety checks
+if (any(duplicated(new_full))) {
+  stop("Dry-run abort: multiple inputs would produce the same output filename.")
+}
+if (any(file.exists(new_full))) {
+  stop("Dry-run abort: some target filenames already exist:\n",
+       paste(basename(new_full[file.exists(new_full)]), collapse = "\n"))
+}
+
+# ---- REAL RENAME ----
+# Uncomment the next lines to actually rename:
+ok_renamed <- file.rename(old_full, new_full)
+if (!all(ok_renamed)) warning("Some renames failed:\n", paste(basename(old_full)[!ok_renamed], collapse = "\n"))
+cat("Done.\n")
+
+```
