@@ -29,13 +29,13 @@ conflicts_prefer(dplyr::slice)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- FALSE
+first_time      <- TRUE
 
 # Directories
 # Mandatory output_folder
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 john_folder <- ""
@@ -51,7 +51,7 @@ skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # If any of the controls should be considered targeting (example EGFP and AAVS1)
 # Nico HepG2 screen
 include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
-
+# include_controls_list <- c()
 # Only Specific controls
 # Liangfu wants only these controls to be used:
 # Liangfu iBeer Screen
@@ -67,12 +67,12 @@ if (FALSE){
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
 data_type           <- "reads"   # can be "reads" or "umis"
-method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- FALSE     # bolean keeps 10% of control sgRNAs for reference.
 use_custom_fraction <- FALSE    # bolean to use custom bin fractions. 
-combine_samples     <- "sample" # can be "", "sample", or "sublib".
+combine_for_guide_stats     <- "sample" # can be "", "sample", or "sublib".
 combine_for_gene_stats <- "none" # can be "none", "all", "sample", or "sublib"
 
 
@@ -218,10 +218,10 @@ if (min_guides_per_gene > 0){
 } else {
   min_guides_per_gene_suffix <- ""
 }
-if (combine_samples == ""){
-  combine_samples_suffix <- ""
+if (combine_for_guide_stats == ""){
+  combine_for_guide_stats_suffix <- ""
 } else {
-  combine_samples_suffix <- paste0("comb_", combine_samples)
+  combine_for_guide_stats_suffix <- paste0("comb_", combine_for_guide_stats)
 }
 #===============================================================================
 # Construct the skip list
@@ -278,7 +278,7 @@ fs_parts <- c(pipeline,
            drop_0s_suffix,
            strict_mode_suffix,
            min_guides_per_gene_suffix,
-           combine_samples_suffix,
+           combine_for_guide_stats_suffix,
            auto_combine_replicates_suffix,
            skip_suffix,
            extra_suffix)
@@ -296,7 +296,7 @@ fi_parts <- c(pipeline,
               drop_0s_suffix,
               strict_mode_suffix,
               min_guides_per_gene_suffix,
-              combine_samples_suffix,
+              combine_for_guide_stats_suffix,
               auto_combine_replicates_suffix,
               skip_suffix,
               extra_suffix)
@@ -334,6 +334,7 @@ get_file_path <- function(folder_path, file_name){
 rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
                     error = function(e) getwd())
 data_dir <- file.path(rmd_dir, "data")
+data_dir <- sub("auxiliary_scripts/", "", data_dir)
 
 genome_output_folder <- make_clean_dir(output_folder, "/ref/")
 dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
@@ -361,7 +362,7 @@ read_file_to_df <- function(file_name,
   file_path <- paste0(folder_path,file_name)  
   df <- read.table(file_path, header=FALSE, sep="\t", stringsAsFactors=FALSE)
   name <- sub(suffix_to_rm,"",file_name)
-  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_\\d+")[, 2]
+  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_[^_]+")[, 2]
   sub_lib <- paste0("ICS_",sub_lib)
   exp <- str_replace(name, "^([^_]+_)", "")
   if(is.null(threshold_df)){
@@ -464,14 +465,14 @@ process_folder_files <- function(folder_path,
   if (data_type == "umis") {
     files <- list.files(
       folder_path,
-      pattern = "^[ILU]_L\\d+_\\d+_dedup_idxstats\\.txt$",
+      pattern = "^[ILU]_L\\d+_[^_]+_dedup_idxstats\\.txt$",
       full.names = TRUE
     )
   
   } else if (data_type == "reads") {
     files <- list.files(
       folder_path,
-      pattern = "^[ILU]_L\\d+_\\d+_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$",
+      pattern = "^[ILU]_L\\d+_[^_]+_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$",
       full.names = TRUE
     )
   
@@ -488,13 +489,13 @@ process_folder_files <- function(folder_path,
     if (data_type == "umis"){
       name <- sub("_dedup_idxstats.txt","",file_name)
       # Extract condition (X), sublib (L#), and sample (#) using regex
-      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_dedup_idxstats\\.txt$")
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_([^_]+)_dedup_idxstats\\.txt$")
       suffix_to_remove <- "_dedup_idxstats.txt"
     }
     if (data_type == "reads"){
       name <- sub("_Aligned.sortedByCoord.out_idxstats.txt","",file_name)
       # Extract condition (X), sublib (L#), and sample (#) using regex
-      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_([^_]+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
       suffix_to_remove <- "_Aligned.sortedByCoord.out_idxstats.txt"
     }
     
@@ -639,7 +640,7 @@ process_john_rf_data <- function(parent_dir,
     # Skip entries from skip list
     if (name %in% skip_list){next}
     # Extract condition (X), sublib (L#), and sample (#) using regex
-    pattern <- paste0("^([ILU])_L(\\d+)_(\\d+)", suffix_to_rm)
+    pattern <- paste0("^([ILU])_L(\\d+)_([^_]+)", suffix_to_rm)
     matches <- str_match(file_name, pattern)
     
     if (is.na(matches[1])) {
@@ -919,7 +920,7 @@ if (length(include_controls_list) > 0){
 
 ```
 
-```{r make_coverage_output, eval=True}
+```{r make_coverage_output, eval=TRUE}
 parse_coverage_file <- function(path) {
   lines <- readLines(path, warn = FALSE)
 
@@ -1313,17 +1314,17 @@ plot_violin_by_group_category_split_by_sublib <- function(df,
       ) +
       geom_text(
         data = label_df,
-        aes(x = group, y = y_limit, label = total_count),
+        aes(x = group, y = y_limit - y_limit/26, label = total_count),
         size = 2.5, inherit.aes = FALSE
       ) +
       geom_text(
         data = label_df,
-        aes(x = group, y = y_limit - y_limit/16, label = paste0("mean: ", mean_count)),
+        aes(x = group, y = y_limit - y_limit/14, label = paste0("mean: ", mean_count)),
         size = 2.3, inherit.aes = FALSE
       ) +
       geom_text(
         data = label_df,
-        aes(x = group, y = y_limit - y_limit/8, label = paste0("sd: ", sd_count)),
+        aes(x = group, y = y_limit - y_limit/10, label = paste0("sd: ", sd_count)),
         size = 2.3, inherit.aes = FALSE
       ) +
       labs(
@@ -1647,8 +1648,8 @@ if (exists("use_only_these_controls_list")) {
     maude_counts_df$isNontargeting[ !(maude_counts_df$sgRNA %in% use_only_these_controls_list) ] <- FALSE
   }
 }
-if (combine_samples != ""){
-  if (combine_samples == "sample"){
+if (combine_for_guide_stats != ""){
+  if (combine_for_guide_stats == "sample"){
     maude_counts_df <- maude_counts_df %>%
       group_by(sgRNA, sublib) %>%
       summarise(
@@ -1668,7 +1669,7 @@ if (combine_samples != ""){
         .groups = "drop"
       )
   }
-  if (combine_samples == "sublib"){
+  if (combine_for_guide_stats == "sublib"){
     maude_counts_df <- maude_counts_df %>%
       group_by(sgRNA, sample) %>%
       summarise(
