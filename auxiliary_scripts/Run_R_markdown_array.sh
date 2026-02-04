@@ -16,6 +16,8 @@
 # USER OPTIONS - Adjust these as needed
 ################################################################################
 
+# WARNING: I am currently hard coding th R-libs Path below the user options!!!
+
 # Output format: choose "script", "pdf", or "html"
 MODE="script"  # <-- change this to "pdf" or "html" or "script"as needed
 # Choose if options or folders are to be alternated.
@@ -70,7 +72,7 @@ if [ "$DIFFERENT_OR_SAME" == "same" ]; then
     OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
     
     PIPELINE="lukas"
-    METHOD="sum"
+    METHOD=""
     DATA_TYPE="reads"
     NORM_METHOD="control_median"
     EXTRA_SUFFIX="rep$((i+1))"
@@ -83,18 +85,28 @@ fi
 ################################################################################
 
 module purge
-ml R-bundle-Bioconductor
-ml R-bundle-CRAN
-ml Pandoc
-ml texlive
-ml ICU
+ml R/4.4.2-gfbf-2024a
+# ml R-bundle-Bioconductor/3.20-foss-2024a-R-4.4.2
+# ml R-bundle-CRAN/2024.11-foss-2024a
+# ml Pandoc
+# ml texlive
+# ml ICU
 
+# Make sure the library paths are correct
 unset R_LIBS
 unset R_LIBS_SITE
 # export R_LIBS_USER="/home/link/R/x86_64-pc-linux-gnu-library/4.4"
 # export R_LIBS_USER="/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/4.4.2/MAUDE"
 export R_LIBS_USER=/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/glibc-2.28/R-4.4.2
+export R_LIBS=/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/glibc-2.28/R-4.4.2
+export R_LIBS_SITE=/g/steinmetz/link/R-libs/x86_64-pc-linux-gnu/glibc-2.28/R-4.4.2
 
+echo "R_LIBS"
+echo "$R_LIBS"
+echo "R_LIBS_SITE"
+echo "$R_LIBS_SITE"
+echo "R_LIBS_USER"
+echo "$R_LIBS_USER"
 # Make sure temp dir exists
 mkdir -p /scratch/link/temp
 
@@ -105,8 +117,9 @@ R_SCRIPT="/scratch/link/temp/$(basename "$RMD_FILE" .Rmd)_${i}.R"
 if [ "$MODE" == "script" ]; then
 
   echo "Running Rmd as plain R script..."
-  Rscript -e "knitr::purl('$RMD_FILE', output='$R_SCRIPT', documentation = 0)"
-  Rscript "$R_SCRIPT" --output_folder "$OUTPUT_FOLDER" --pipeline "$PIPELINE" --data_type "$DATA_TYPE" --method "$METHOD" --norm_method "$NORM_METHOD" --drop_0s FALSE --recover_input TRUE --extra_suffix "$EXTRA_SUFFIX"
+  Rscript --vanilla -e "knitr::purl('$RMD_FILE', output='$R_SCRIPT', documentation = 0)"
+  export SOURCE_RMD="$RMD_FILE"
+  Rscript --vanilla "$R_SCRIPT" --output_folder "$OUTPUT_FOLDER" --pipeline "$PIPELINE" --data_type "$DATA_TYPE" --method "$METHOD" --norm_method "$NORM_METHOD" --drop_0s FALSE --recover_input TRUE --extra_suffix "$EXTRA_SUFFIX"
 
 
 elif [ "$MODE" == "pdf" ]; then
