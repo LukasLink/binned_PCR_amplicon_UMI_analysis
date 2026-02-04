@@ -28,12 +28,12 @@ conflicts_prefer(dplyr::slice)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- TRUE
+first_time      <- FALSE
 
 # Directories
 # Mandatory output_folder
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -41,7 +41,7 @@ john_folder <- ""
 # If any files are to be skipped list their names here
 
 skip_list <- c() # individual files, example: c("I_L3_5", "U_L1_2")
-skip_list_sublib <- c("L1") # entire sublibraries, example: c("L4","L5")
+skip_list_sublib <- c() # entire sublibraries, example: c("L4","L5")
 skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # Warning: skipping entire sublibraries and sample numbers does not work for
 # non numeric samples, or samples >9999
@@ -112,7 +112,13 @@ option_list <- list(
               help = "John RF folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt')", 
               metavar = "PATH"),
   make_option(c("--skip_list"), type = "character", default = paste(skip_list, collapse = ","),
-              help = "If any files are to be skipped list their names here (comma-separated) (default: 'L_L4_3,U_L4_3')", 
+              help = "If any files are to be skipped list their names here (comma-separated) (default: '')", 
+              metavar = "LIST"),
+  make_option(c("--skip_list_sublib"), type = "character", default = paste(skip_list_sublib, collapse = ","),
+              help = "If any sublibraries are to be skipped list their names here (comma-separated) (default: '')", 
+              metavar = "LIST"),
+  make_option(c("--skip_list_sample"), type = "character", default = paste(skip_list_sample, collapse = ","),
+              help = "If any samples are to be skipped list their names here (comma-separated) (default: '')", 
               metavar = "LIST"),
   make_option(c("--pipeline"), type = "character", default = pipeline, 
               help = "Pipeline name (default: 'lukas')", metavar = "CHARACTER"),
@@ -152,6 +158,8 @@ output_folder                     <- opt$output_folder
 john_folder                       <- opt$john_folder
 john_rf_folder                    <- opt$john_rf_folder
 skip_list                         <- strsplit(opt$skip_list, ",")[[1]]
+skip_list_sublib                  <- strsplit(opt$skip_list_sublib, ",")[[1]]
+skip_list_sample                  <- strsplit(opt$skip_list_sample, ",")[[1]]
 pipeline                          <- opt$pipeline
 data_type                         <- opt$data_type
 method                            <- opt$method
@@ -172,6 +180,8 @@ cat("output_folder:                     ", output_folder, "\n")
 cat("john_folder:                       ", john_folder, "\n")
 cat("john_rf_folder:                    ", john_rf_folder, "\n")
 cat("skip_list:                         ", paste(skip_list, collapse = ", "), "\n")
+cat("skip_list_sublib:                  ", paste(skip_list_sublib, collapse = ", "), "\n")
+cat("skip_list_sample:                  ", paste(skip_list_sample, collapse = ", "), "\n")
 cat("pipeline:                          ", pipeline, "\n")
 cat("data_type:                         ", data_type, "\n")
 cat("method:                            ", method, "\n")
@@ -225,41 +235,38 @@ if (combine_for_guide_stats == ""){
 #===============================================================================
 # Construct the skip list
 #===============================================================================
-# WARNING, this is a weird hot fix that does not work properly for non numeric samples
 
 create_skip_list_and_suffix <- function(skip_list, skip_list_sublib, skip_list_sample){
   skip_suffix <- ""
-  
-  bin <- c("I","L","U")
 
-  # Z variants: 1..999 plus 01..99 and 001..999 (all as strings)
-  possible_sample_numbers <- unique(c(
-    as.character(1:999),
-    sprintf("%02d", 1:999),
-    sprintf("%03d", 1:999)
-  ))
-  
+  bins <- c("I","L","U")
+
+  # helper to safely inject literal values into regex (important if A could contain regex chars)
+  esc_re <- function(x) gsub("([][{}()+*^$|\\\\.?])", "\\\\\\1", x, perl = TRUE)
+
   if (length(skip_list_sublib) > 0) {
-    df <- expand.grid(bin = bin, sublib = skip_list_sublib, sample = possible_sample_numbers, stringsAsFactors = FALSE)
-    skip_list <- c(skip_list, paste(df$bin, df$sublib, df$sample, sep = "_"))
+    # regex: [ILU]_A_[^_]+   (A from skip_list_sublib)
+    pats <- as.vector(outer(bins, esc_re(skip_list_sublib),
+                            FUN = function(b, a) paste0("^", b, "_", a, "_[^_]+$")))
+    skip_list <- c(skip_list, paste0("re:", pats))
     skip_suffix <- paste0(skip_suffix, "no_sublib_", paste0(skip_list_sublib, collapse = "_"))
   }
+
   if (length(skip_list_sample) > 0) {
-    if (length(skip_list_sublib) > 0) {
-      skip_suffix <- paste0(skip_suffix, "_")
-    }
-    possible_sublib_numbers <- unique(c(
-      paste0("L", 1:999),
-      paste0("L", sprintf("%02d", 1:999)),
-      paste0("L", sprintf("%03d", 1:999))
-    ))
-    df <- expand.grid(bin = bin, sublib = possible_sublib_numbers, sample = skip_list_sample, stringsAsFactors = FALSE)
-    skip_list <- c(skip_list, paste(df$bin, df$sublib, df$sample, sep = "_"))
+    if (length(skip_list_sublib) > 0) skip_suffix <- paste0(skip_suffix, "_")
+
+    # regex: [ILU]_L\\d+_A   (A from skip_list_sample)
+    # (anchored; allows L + digits, any width)
+    pats <- as.vector(outer(bins, esc_re(skip_list_sample),
+                            FUN = function(b, a) paste0("^", b, "_L\\d+_", a, "$")))
+    skip_list <- c(skip_list, paste0("re:", pats))
     skip_suffix <- paste0(skip_suffix, "no_sample_", paste0(skip_list_sample, collapse = "_"))
   }
+
   skip_list <- unique(skip_list)
   return(list(skip_list, skip_suffix))
 }
+
 skip_list_and_suffix <- create_skip_list_and_suffix(skip_list,
                                                     skip_list_sublib,
                                                     skip_list_sample)
@@ -508,7 +515,15 @@ process_folder_files <- function(folder_path,
     }
     
     # Skip entries from skip list
-    if (name %in% skip_list){
+    skip_this_file <- any(vapply(skip_list, function(x) {
+      if (startsWith(x, "re:")) {
+        grepl(sub("^re:", "", x), name, perl = TRUE)
+      } else {
+        identical(x, name)
+      }
+    }, logical(1)))
+    
+    if (skip_this_file){
       print(paste(name, "skipped due to skip list"))
       return(NULL)
       }
@@ -646,7 +661,16 @@ process_john_rf_data <- function(parent_dir,
     file_name <- basename(file)
     name <- sub(suffix_to_rm,"",file_name)
     # Skip entries from skip list
-    if (name %in% skip_list){next}
+    skip_this_file <- any(vapply(skip_list, function(x) {
+      if (startsWith(x, "re:")) {
+        grepl(sub("^re:", "", x), name, perl = TRUE)
+      } else {
+        identical(x, name)
+      }
+    }, logical(1)))
+    
+    if (skip_this_file){next}
+    
     # Extract condition (X), sublib (L#), and sample (#) using regex
     pattern <- paste0("^([ILU])_L(\\d+)_([^_]+)", suffix_to_rm)
     matches <- str_match(file_name, pattern)
@@ -730,7 +754,16 @@ process_john_data <- function(parent_dir,
       next
     }
     name <- paste0(match[2],"_",match[3],match[4],"_",match[5])
-    if (name %in% skip_list){next}
+    
+    # Skip if in skip list.
+    is_skipped <- any(vapply(skip_list, function(x) {
+      if (startsWith(x, "re:")) {
+        grepl(sub("^re:", "", x), name, perl = TRUE)
+      } else {
+        identical(x, name)
+      }
+    }, logical(1)))
+    if (skip_this_file){next}
     
     condition <- case_when(
       match[2] == "I" ~ "input",
@@ -926,6 +959,36 @@ if (length(include_controls_list) > 0){
   }
 }
 
+# Combine either samples or sublibraries of the same condition. 
+if (combine_for_guide_stats != ""){
+  if (combine_for_guide_stats == "sample"){
+    count_df_long <- count_df_long %>%
+      group_by(sgRNA, sublib, condition) %>%
+      summarise(
+        # set sample name for the combined rows
+        sample = "sample_1",
+        count = sum(count, na.rm = TRUE),
+        exp = dplyr::first(exp),
+        group_category = dplyr::first(group_category),
+        
+        # keep one sublib/sgRNA (also fine even though they're grouping keys)
+        .groups = "drop"
+      )
+  }
+  if (combine_for_guide_stats == "sublib"){
+    count_df_long <- count_df_long %>%
+      group_by(sgRNA, sample, condition) %>%
+      summarise(
+        sublib = "sublib_1",
+        count = sum(count, na.rm = TRUE),
+        exp = dplyr::first(exp),
+        group_category = dplyr::first(group_category),
+        
+        # keep one sublib/sgRNA (also fine even though they're grouping keys)
+        .groups = "drop"
+      )    
+  }
+}  
 ```
 
 ```{r make_coverage_output, eval=TRUE}
@@ -1657,48 +1720,7 @@ if (exists("use_only_these_controls_list")) {
     maude_counts_df$isNontargeting[ !(maude_counts_df$sgRNA %in% use_only_these_controls_list) ] <- FALSE
   }
 }
-if (combine_for_guide_stats != ""){
-  if (combine_for_guide_stats == "sample"){
-    maude_counts_df <- maude_counts_df %>%
-      group_by(sgRNA, sublib) %>%
-      summarise(
-        # set sample name for the combined rows
-        sample = "sample_1",
-        
-        # add up integer count columns
-        input = sum(input, na.rm = TRUE),
-        lower = sum(lower, na.rm = TRUE),
-        upper = sum(upper, na.rm = TRUE),
-        
-        # keep the first value for everything else
-        exp = dplyr::first(exp),
-        isNontargeting = dplyr::first(isNontargeting),
-        
-        # keep one sublib/sgRNA (also fine even though they're grouping keys)
-        .groups = "drop"
-      )
-  }
-  if (combine_for_guide_stats == "sublib"){
-    maude_counts_df <- maude_counts_df %>%
-      group_by(sgRNA, sample) %>%
-      summarise(
-        # set sample name for the combined rows
-        sublib = "sublib_1",
-        
-        # add up integer count columns
-        input = sum(input, na.rm = TRUE),
-        lower = sum(lower, na.rm = TRUE),
-        upper = sum(upper, na.rm = TRUE),
-        
-        # keep the first value for everything else
-        exp = dplyr::first(exp),
-        isNontargeting = dplyr::first(isNontargeting),
-        
-        # keep one sublib/sgRNA (also fine even though they're grouping keys)
-        .groups = "drop"
-      )    
-  }
-}  
+
 ```
 
 ## Exploration of the read/umi counts in MAUDE format
@@ -2536,14 +2558,22 @@ if (length(include_controls_list) > 0) {
 # Write to Excel
 csv_file_path <- sub(".rds",".csv",paste0(results_output_folder, "/", "MAUDE_Hits", file_suffix))
 write_csv(export_df, csv_file_path)
+
 excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "MAUDE_Hits", file_suffix))
 write_xlsx(export_df, excel_file_path)
 ```
-``` {r read_count_export, eval=FALSE}
 
-# Write to Excel
-csv_file_path <- sub(".rds",".csv",paste0(results_output_folder, "/", "Counts", file_suffix))
-write_csv(maude_counts_df, csv_file_path)
+``` {r read_count_export, eval=FALSE}
+# Save read counts to csv and rds
+rds_count_file_path <- get_file_path(rds_output_folder, paste0("maude_counts",file_suffix))
+
+counts_df <- maude_counts_df %>% left_join(merged_sgRNA_df %>% 
+                                             select(sgrna_id, entrez, Gene),
+                                           by = c("sgRNA" = "sgrna_id"))
+saveRDS(counts_df, rds_count_file_path)
+# csv_file_path <- sub(".rds",".csv",paste0(results_output_folder, "/", "Counts", file_suffix))
+# write_csv(maude_counts_df, csv_file_path)
+
 ```
 
 
