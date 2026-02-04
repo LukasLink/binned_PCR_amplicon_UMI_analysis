@@ -6,6 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+print(.libPaths())
 knitr::opts_chunk$set(echo = FALSE)
 options(bitmapType="cairo")
 library(tidyverse)
@@ -16,23 +17,23 @@ library(ggplot2)
 library(optparse)
 library(ggrepel)
 library(writexl)
+library(stringr)
 
 conflicts_prefer(dplyr::rename)
 conflicts_prefer(dplyr::filter)
 conflicts_prefer(dplyr::select)
 conflicts_prefer(dplyr::slice)
-conflicts_prefer(base::setdiff)
 
 #===============================================================================
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- TRUE
+first_time      <- FALSE
 
 # Directories
 # Mandatory output_folder
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -111,7 +112,13 @@ option_list <- list(
               help = "John RF folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt')", 
               metavar = "PATH"),
   make_option(c("--skip_list"), type = "character", default = paste(skip_list, collapse = ","),
-              help = "If any files are to be skipped list their names here (comma-separated) (default: 'L_L4_3,U_L4_3')", 
+              help = "If any files are to be skipped list their names here (comma-separated) (default: '')", 
+              metavar = "LIST"),
+  make_option(c("--skip_list_sublib"), type = "character", default = paste(skip_list_sublib, collapse = ","),
+              help = "If any sublibraries are to be skipped list their names here (comma-separated) (default: '')", 
+              metavar = "LIST"),
+  make_option(c("--skip_list_sample"), type = "character", default = paste(skip_list_sample, collapse = ","),
+              help = "If any samples are to be skipped list their names here (comma-separated) (default: '')", 
               metavar = "LIST"),
   make_option(c("--pipeline"), type = "character", default = pipeline, 
               help = "Pipeline name (default: 'lukas')", metavar = "CHARACTER"),
@@ -151,6 +158,8 @@ output_folder                     <- opt$output_folder
 john_folder                       <- opt$john_folder
 john_rf_folder                    <- opt$john_rf_folder
 skip_list                         <- strsplit(opt$skip_list, ",")[[1]]
+skip_list_sublib                  <- strsplit(opt$skip_list_sublib, ",")[[1]]
+skip_list_sample                  <- strsplit(opt$skip_list_sample, ",")[[1]]
 pipeline                          <- opt$pipeline
 data_type                         <- opt$data_type
 method                            <- opt$method
@@ -224,41 +233,38 @@ if (combine_for_guide_stats == ""){
 #===============================================================================
 # Construct the skip list
 #===============================================================================
-# WARNING, this is a weird hot fix that does not work properly for non numeric samples
 
 create_skip_list_and_suffix <- function(skip_list, skip_list_sublib, skip_list_sample){
   skip_suffix <- ""
-  
-  bin <- c("I","L","U")
 
-  # Z variants: 1..999 plus 01..99 and 001..999 (all as strings)
-  possible_sample_numbers <- unique(c(
-    as.character(1:999),
-    sprintf("%02d", 1:999),
-    sprintf("%03d", 1:999)
-  ))
-  
+  bins <- c("I","L","U")
+
+  # helper to safely inject literal values into regex (important if A could contain regex chars)
+  esc_re <- function(x) gsub("([][{}()+*^$|\\\\.?])", "\\\\\\1", x, perl = TRUE)
+
   if (length(skip_list_sublib) > 0) {
-    df <- expand.grid(bin = bin, sublib = skip_list_sublib, sample = possible_sample_numbers, stringsAsFactors = FALSE)
-    skip_list <- c(skip_list, paste(df$bin, df$sublib, df$sample, sep = "_"))
+    # regex: [ILU]_A_[^_]+   (A from skip_list_sublib)
+    pats <- as.vector(outer(bins, esc_re(skip_list_sublib),
+                            FUN = function(b, a) paste0("^", b, "_", a, "_[^_]+$")))
+    skip_list <- c(skip_list, paste0("re:", pats))
     skip_suffix <- paste0(skip_suffix, "no_sublib_", paste0(skip_list_sublib, collapse = "_"))
   }
+
   if (length(skip_list_sample) > 0) {
-    if (length(skip_list_sublib) > 0) {
-      skip_suffix <- paste0(skip_suffix, "_")
-    }
-    possible_sublib_numbers <- unique(c(
-      paste0("L", 1:999),
-      paste0("L", sprintf("%02d", 1:999)),
-      paste0("L", sprintf("%03d", 1:999))
-    ))
-    df <- expand.grid(bin = bin, sublib = possible_sublib_numbers, sample = skip_list_sample, stringsAsFactors = FALSE)
-    skip_list <- c(skip_list, paste(df$bin, df$sublib, df$sample, sep = "_"))
+    if (length(skip_list_sublib) > 0) skip_suffix <- paste0(skip_suffix, "_")
+
+    # regex: [ILU]_L\\d+_A   (A from skip_list_sample)
+    # (anchored; allows L + digits, any width)
+    pats <- as.vector(outer(bins, esc_re(skip_list_sample),
+                            FUN = function(b, a) paste0("^", b, "_L\\d+_", a, "$")))
+    skip_list <- c(skip_list, paste0("re:", pats))
     skip_suffix <- paste0(skip_suffix, "no_sample_", paste0(skip_list_sample, collapse = "_"))
   }
+
   skip_list <- unique(skip_list)
   return(list(skip_list, skip_suffix))
 }
+
 skip_list_and_suffix <- create_skip_list_and_suffix(skip_list,
                                                     skip_list_sublib,
                                                     skip_list_sample)
@@ -352,8 +358,9 @@ results_output_folder <- make_clean_dir(output_folder, "/results/")
 merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
                                          "merged_sgRNA_df.rds"))
 
-
 ```
+
+
 
 ``` {r load_comparision_specific_libs, eval=TRUE}
 library(VennDiagram)
@@ -416,6 +423,9 @@ maude_example_guide_stats <- findGuideHitsAllScreens(
 )
 ```
 
+## Generate the long format read/umi counts either from my pipline or from johns
+Also provides information for each file about coverage and correct alignment
+
 ```{r get_count_df_long, eval=TRUE}
 
 read_file_to_df <- function(file_name,
@@ -428,7 +438,7 @@ read_file_to_df <- function(file_name,
   file_path <- paste0(folder_path,file_name)  
   df <- read.table(file_path, header=FALSE, sep="\t", stringsAsFactors=FALSE)
   name <- sub(suffix_to_rm,"",file_name)
-  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_\\d+")[, 2]
+  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_[^_]+")[, 2]
   sub_lib <- paste0("ICS_",sub_lib)
   exp <- str_replace(name, "^([^_]+_)", "")
   if(is.null(threshold_df)){
@@ -445,8 +455,36 @@ read_file_to_df <- function(file_name,
     filter(sgRNA != "*")
   
   check_df <- merged_sgRNA_df %>% select(sgrna_id, sublib)
-  df <- df %>%
+  # First try: plain left_join
+  joined_df <- df %>%
     left_join(check_df, by = c("sgRNA" = "sgrna_id"))
+  
+  # Check for non-unique sgRNA in the result
+  if (any(duplicated(joined_df$sgRNA))) {
+    warning("Non-unique `sgRNA` after join; redoing join with 1:1 pairing by order.\n")
+    
+    # Add within-id index on both sides
+    df_idx <- df %>%
+      group_by(sgRNA) %>%
+      mutate(.pair_id = row_number()) %>%
+      ungroup()
+    
+    check_idx <- check_df %>%
+      group_by(sgrna_id) %>%
+      mutate(.pair_id = row_number()) %>%
+      ungroup()
+    
+    # Redo join using sgRNA/sgrna_id + the position
+    joined_df <- df_idx %>%
+      left_join(
+        check_idx,
+        by = c("sgRNA" = "sgrna_id", ".pair_id")
+      ) %>%
+      select(-.pair_id)      # clean up helper column
+    df <- joined_df
+  } else {
+    df <- joined_df
+  }
   
   if (check_alignments == TRUE) {
     cat("Checking wrong allignments for: ", name,"\n")
@@ -494,7 +532,7 @@ read_file_to_df <- function(file_name,
 
 process_folder_files <- function(folder_path,
                                  threshold_df = NULL,
-                                 skip_list = c("L_L4_3","U_L4_3"),
+                                 skip_list = c(),
                                  check_alignments = TRUE){
   
   data_type <- get("data_type", envir = .GlobalEnv)
@@ -503,14 +541,14 @@ process_folder_files <- function(folder_path,
   if (data_type == "umis") {
     files <- list.files(
       folder_path,
-      pattern = "^[ILU]_L\\d+_\\d+_dedup_idxstats\\.txt$",
+      pattern = "^[ILU]_L\\d+_[^_]+_dedup_idxstats\\.txt$",
       full.names = TRUE
     )
   
   } else if (data_type == "reads") {
     files <- list.files(
       folder_path,
-      pattern = "^[ILU]_L\\d+_\\d+_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$",
+      pattern = "^[ILU]_L\\d+_[^_]+_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$",
       full.names = TRUE
     )
   
@@ -527,18 +565,29 @@ process_folder_files <- function(folder_path,
     if (data_type == "umis"){
       name <- sub("_dedup_idxstats.txt","",file_name)
       # Extract condition (X), sublib (L#), and sample (#) using regex
-      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_dedup_idxstats\\.txt$")
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_([^_]+)_dedup_idxstats\\.txt$")
       suffix_to_remove <- "_dedup_idxstats.txt"
     }
     if (data_type == "reads"){
-      name <- sub("_Aligned.sortedByCoord.out_idxstats","",file_name)
+      name <- sub("_Aligned.sortedByCoord.out_idxstats.txt","",file_name)
       # Extract condition (X), sublib (L#), and sample (#) using regex
-      matches <- str_match(file_name, "^([ILU])_L(\\d+)_(\\d+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
+      matches <- str_match(file_name, "^([ILU])_L(\\d+)_([^_]+)_Aligned\\.sortedByCoord\\.out_idxstats\\.txt$")
       suffix_to_remove <- "_Aligned.sortedByCoord.out_idxstats.txt"
     }
     
     # Skip entries from skip list
-    if (name %in% skip_list){return(NULL)}
+    skip_this_file <- any(vapply(skip_list, function(x) {
+      if (startsWith(x, "re:")) {
+        grepl(sub("^re:", "", x), name, perl = TRUE)
+      } else {
+        identical(x, name)
+      }
+    }, logical(1)))
+    
+    if (skip_this_file){
+      print(paste(name, "skipped due to skip list"))
+      return(NULL)
+      }
     
     if (is.na(matches[1])) {
       stop(paste("Filename does not match expected pattern:", file_name))
@@ -673,9 +722,18 @@ process_john_rf_data <- function(parent_dir,
     file_name <- basename(file)
     name <- sub(suffix_to_rm,"",file_name)
     # Skip entries from skip list
-    if (name %in% skip_list){next}
+    skip_this_file <- any(vapply(skip_list, function(x) {
+      if (startsWith(x, "re:")) {
+        grepl(sub("^re:", "", x), name, perl = TRUE)
+      } else {
+        identical(x, name)
+      }
+    }, logical(1)))
+    
+    if (skip_this_file){next}
+    
     # Extract condition (X), sublib (L#), and sample (#) using regex
-    pattern <- paste0("^([ILU])_L(\\d+)_(\\d+)", suffix_to_rm)
+    pattern <- paste0("^([ILU])_L(\\d+)_([^_]+)", suffix_to_rm)
     matches <- str_match(file_name, pattern)
     
     if (is.na(matches[1])) {
@@ -757,7 +815,16 @@ process_john_data <- function(parent_dir,
       next
     }
     name <- paste0(match[2],"_",match[3],match[4],"_",match[5])
-    if (name %in% skip_list){next}
+    
+    # Skip if in skip list.
+    is_skipped <- any(vapply(skip_list, function(x) {
+      if (startsWith(x, "re:")) {
+        grepl(sub("^re:", "", x), name, perl = TRUE)
+      } else {
+        identical(x, name)
+      }
+    }, logical(1)))
+    if (skip_this_file){next}
     
     condition <- case_when(
       match[2] == "I" ~ "input",
@@ -884,6 +951,9 @@ normalize_count_df_long <- function(count_df_long, norm_method = "control_median
 process_john_data_backup <- process_john_data
 pseudocount_added <- FALSE
 
+sink(get_file_path(rds_output_folder,paste0(file_info_suffix,"_coverage.txt")),
+     split = TRUE) # capture output into a file
+
 if (pipeline == "john"){
   count_df_long <- process_john_data(john_folder,
                                      data_type = data_type,
@@ -926,11 +996,30 @@ if (pipeline == "john"){
     }
   }  
 }
+sink()
+if (extra_suffix == "cf"){
+  count_df_long <- count_df_long %>%
+    filter(!(group != "targeting" & count < simplified_cf_threshold))
+}
+
+# Extend the include_controls_list if use_only_these_controls_list is given
+if (exists("use_only_these_controls_list")) {
+  if (length(use_only_these_controls_list) > 0){
+    # list of sgRNAs that were not targeting (before) and not in allowed controls
+    excluded_controls <- count_df_long %>%
+      filter(group_category != "targeting", !sgRNA %in% use_only_these_controls_list) %>%
+      distinct(sgRNA) %>%
+      pull(sgRNA)
+  
+    include_controls_list <- c(include_controls_list, excluded_controls)
+  }
+}
 if (length(include_controls_list) > 0){
   for (control_gene in include_controls_list){
     count_df_long$group_category[grepl(control_gene, count_df_long$sgRNA)] <- "targeting"
   }
 }
+
 ```
 ```{r prepare_data_for_maude, eval=TRUE}
 #Select wether to use targeting_control or non_targeting_control for normalization (or both I guess)
@@ -2744,7 +2833,7 @@ high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                            venn_diagram = FALSE)
 explorative_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                      hits_in_X_reps = 10,
-                                                     correlation_heatmap = FALSE,
+                                                     correlation_heatmap = TRUE,
                                                      venn_diagram = FALSE)
 
 excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_high_confidence", file_suffix))
