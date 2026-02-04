@@ -27,13 +27,13 @@ conflicts_prefer(base::setdiff)
 # User Options (can be overrided via CLI)
 #===============================================================================
 # first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- FALSE
+first_time      <- TRUE
 
 # Directories
 # Mandatory output_folder
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Texas"
-
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA"
+# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
 john_folder <- ""
@@ -47,8 +47,9 @@ skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 
 # Extra target list
 # If any of the controls should be considered targeting (example EGFP and AAVS1)
+# Nico HepG2 screen
 include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
-
+# include_controls_list <- c()
 # Only Specific controls
 # Liangfu wants only these controls to be used:
 # Liangfu iBeer Screen
@@ -64,11 +65,13 @@ if (FALSE){
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
 data_type           <- "reads"   # can be "reads" or "umis"
-method              <- ""    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+method              <- ""    # can be "rep", "rep_sample", "rep_sublib", or "" 
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
-subsample_controls  <- FALSE     # bolean keeps 20% of control sgRNAs for reference.
-combine_samples     <- "sample" # can be "", "sample", or "sublib".
+subsample_controls  <- FALSE     # bolean keeps 10% of control sgRNAs for reference.
+use_custom_fraction <- FALSE    # bolean to use custom bin fractions. 
+combine_for_guide_stats     <- "sample" # can be "", "sample", or "sublib".
+combine_for_gene_stats <- "none" # can be "none", "all", "sample", or "sublib"
 
 
 # Set Fractions for the upper and lower bins
@@ -79,7 +82,9 @@ upper_lower_percentage <- 0.10  # Fraction of the lower&upper bin 0.10 = 10%
 extra_suffix  <- ""   # custom sufix, special behaviour when set to "rf"
                       # if extra_suffix is set to "rf" it applies simplified read filtering,  
                       # which removes all reads below simplified_rf_threshold
-simplified_rf_threshold <- 1000 # threshold for simplified filtering
+                      # "cf" does the same only for control guides
+simplified_rf_threshold <- 2000 # threshold for simplified filtering
+simplified_cf_threshold <- 2000 # threshold for simplified filtering
 
 # Are all the non-targeting control sgRNAS the same in all sublibraries/replicates?
 same_controls_in_all_sublibraries <- TRUE
@@ -211,10 +216,10 @@ if (min_guides_per_gene > 0){
 } else {
   min_guides_per_gene_suffix <- ""
 }
-if (combine_samples == ""){
-  combine_samples_suffix <- ""
+if (combine_for_guide_stats == ""){
+  combine_for_guide_stats_suffix <- ""
 } else {
-  combine_samples_suffix <- paste0("comb_", combine_samples)
+  combine_for_guide_stats_suffix <- paste0("comb_", combine_for_guide_stats)
 }
 #===============================================================================
 # Construct the skip list
@@ -260,7 +265,6 @@ skip_list_and_suffix <- create_skip_list_and_suffix(skip_list,
 skip_list <- skip_list_and_suffix[[1]]
 skip_suffix <- skip_list_and_suffix[[2]]
 
-
 #===============================================================================
 # Construct the file suffix
 #===============================================================================
@@ -272,7 +276,7 @@ fs_parts <- c(pipeline,
            drop_0s_suffix,
            strict_mode_suffix,
            min_guides_per_gene_suffix,
-           combine_samples_suffix,
+           combine_for_guide_stats_suffix,
            auto_combine_replicates_suffix,
            skip_suffix,
            extra_suffix)
@@ -290,7 +294,7 @@ fi_parts <- c(pipeline,
               drop_0s_suffix,
               strict_mode_suffix,
               min_guides_per_gene_suffix,
-              combine_samples_suffix,
+              combine_for_guide_stats_suffix,
               auto_combine_replicates_suffix,
               skip_suffix,
               extra_suffix)
@@ -325,8 +329,17 @@ get_file_path <- function(folder_path, file_name){
   return(full_path)
 }
 
-rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
-                    error = function(e) getwd())
+# Point to the data subdirectory with my pre-processed info files
+rmd_path <- Sys.getenv("SOURCE_RMD", unset = NA_character_)
+
+rmd_dir <- if (!is.na(rmd_path) && nzchar(rmd_path)) {
+  dirname(normalizePath(rmd_path))
+} else {
+  # fallback: script dir (when running a normal .R script)
+  tryCatch(dirname(normalizePath(sys.frame(1)$ofile)),
+           error = function(e) getwd())
+}
+
 data_dir <- file.path(rmd_dir, "data")
 data_dir <- sub("auxiliary_scripts/", "", data_dir)
 
@@ -338,6 +351,7 @@ results_output_folder <- make_clean_dir(output_folder, "/results/")
 
 merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
                                          "merged_sgRNA_df.rds"))
+
 
 ```
 
@@ -1109,6 +1123,7 @@ if (method == "rep_sublib"){
     mutate(exp = sublib)
 }
 if (method == "sum"){
+  stop("Method 'sum' is deprecated, use the option combine_for_guide_stats instead")
   maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
                                          print = FALSE,
                                          drop_0s = drop_0s,
@@ -1154,8 +1169,8 @@ if (exists("use_only_these_controls_list")) {
     maude_counts_df$isNontargeting[ !(maude_counts_df$sgRNA %in% use_only_these_controls_list) ] <- FALSE
   }
 }
-if (combine_samples != ""){
-  if (combine_samples == "sample"){
+if (combine_for_guide_stats != ""){
+  if (combine_for_guide_stats == "sample"){
     maude_counts_df <- maude_counts_df %>%
       group_by(sgRNA, sublib) %>%
       summarise(
@@ -1175,7 +1190,7 @@ if (combine_samples != ""){
         .groups = "drop"
       )
   }
-  if (combine_samples == "sublib"){
+  if (combine_for_guide_stats == "sublib"){
     maude_counts_df <- maude_counts_df %>%
       group_by(sgRNA, sample) %>%
       summarise(
@@ -2725,17 +2740,19 @@ automate_calc_replicate_comparison <- function(file_info_suffix = get("file_info
 ``` {r Calculated_replicated_analysis, eval=False}
 high_confidence_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                            hits_in_X_reps = 16,
-                                                           correlation_heatmap = TRUE,
+                                                           correlation_heatmap = FALSE,
                                                            venn_diagram = FALSE)
-inclusive_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
+explorative_hits <- automate_calc_replicate_comparison(FDR_threshold = 0.05,
                                                      hits_in_X_reps = 10,
                                                      correlation_heatmap = FALSE,
                                                      venn_diagram = FALSE)
 
 excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_high_confidence", file_suffix))
 write_xlsx(high_confidence_hits$Hits_in_X_df, excel_file_path)
+saveRDS(high_confidence_hits$Hits_in_X_df, get_file_path(rds_output_folder, paste0("high_confidence_hits","_",file_info_suffix,".rds")))
 excel_file_path <- sub("\\.rds$", ".xlsx", paste0(results_output_folder, "/", "Hits_explorative", file_suffix))
-write_xlsx(inclusive_hits$Hits_in_X_df, excel_file_path)
+write_xlsx(explorative_hits$Hits_in_X_df, excel_file_path)
+saveRDS(explorative_hits$Hits_in_X_df, get_file_path(rds_output_folder, paste0("explorative_hits","_",file_info_suffix,".rds")))
 ```
 ## Compare Sublibraries 
 For this to function You need to run data_analysis_with_MAUDE multiple times,
