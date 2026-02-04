@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J CP_%A_2_80    # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
+#SBATCH -J CP_D    # Job Name                # chmod +x /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
 #SBATCH -A lsteinme             # profile of the group                # sbatch /home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/Combined_pipeline.sh
 #SBATCH --mem 128g               # Total memory required for the job #  --dependency=afterok:46151850
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 12                   # Number of CPUs
-#SBATCH -t 02:30:00             # Runtime until the job is forcefully canceled
+#SBATCH -t 04:00:00             # Runtime until the job is forcefully canceled
 #SBATCH --qos normal 
-#SBATCH -o /g/steinmetz/link/logs/log_%A_CP_2_80.out
-#SBATCH -e /g/steinmetz/link/logs//log_%A_CP_2_80.err
+#SBATCH -o /g/steinmetz/link/logs/log_%x_%A.out
+#SBATCH -e /g/steinmetz/link/logs//log_%x_%A.err
 #SBATCH --mail-type=BEGIN,END,FAIL        	# notifications for job start, done & fail
 #SBATCH --mail-user=lukas.link@embl.de      # send-to address     # notifications for job done & fail
 
@@ -16,8 +16,8 @@
 ################################################################################
 
 # Input and output folder paths
-INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/Liangfu_iBeer_2/Atto/"
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/2/HepG2_dual_rep_PA_subsample/subsample_80"
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/RAW/HepG2_resequence_26_01_30"
+OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 
 # Regex pattern for extracting UMIs
 #REGEX_PATTERN="^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
@@ -29,8 +29,8 @@ REGEX_PATTERN="^(?P<discard_1>.{0,4})(?P<umi_1>.{1})(?P<discard_2>TCTTGTGGAAAGGA
 # everything captured by "discard_1", "discard_2", etc. 
 
 # STAR settings
-SJDB_OVERHANG=56 #This is the lenght read -1
-Genome_SA_index_N_Bases=10 #Calculated by Combined_pipline_support.rmd
+SJDB_OVERHANG=166 #This is the lenght read -1
+Genome_SA_index_N_Bases=8 #Calculated by Combined_pipline_support.rmd
 NUM_THREADS=10 # The number of Threads used by star, should NOT be higher than n set above. 
 MAX_MEM=100000000000 # The number of bytes available to STAR, should NOT be higher than mem set above
 
