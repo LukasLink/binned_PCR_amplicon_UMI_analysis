@@ -6,6 +6,7 @@ output: html_document
 ---
 # Set User options here
 ```{r setup, include=FALSE}
+print(.libPaths())
 knitr::opts_chunk$set(echo = FALSE)
 options(bitmapType="cairo")
 library(tidyverse)
@@ -16,8 +17,6 @@ library(ggplot2)
 library(optparse)
 library(ggrepel)
 library(writexl)
-library(metap) 
-library(depmap)
 library(stringr)
 
 conflicts_prefer(dplyr::rename)
@@ -34,7 +33,7 @@ first_time      <- TRUE
 # Directories
 # Mandatory output_folder
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA"
 # output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
 #optional folders for results from johns bcwithqc
 john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
@@ -42,7 +41,7 @@ john_folder <- ""
 # If any files are to be skipped list their names here
 
 skip_list <- c() # individual files, example: c("I_L3_5", "U_L1_2")
-skip_list_sublib <- c() # entire sublibraries, example: c("L4","L5")
+skip_list_sublib <- c("L1") # entire sublibraries, example: c("L4","L5")
 skip_list_sample <- c() # entire sample numbers, example c("1", "24")
 # Warning: skipping entire sublibraries and sample numbers does not work for
 # non numeric samples, or samples >9999
@@ -67,7 +66,7 @@ if (FALSE){
 # Set Options for pipline function
 pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
 data_type           <- "reads"   # can be "reads" or "umis"
-method              <- "sum"    # can be "rep", "rep_sample", "rep_sublib", "sum" or ""
+method              <- ""    # can be "rep", "rep_sample", "rep_sublib", or "" 
 norm_method         <- "control_median"       # can be "control_median" or ""
 recover_input       <- TRUE     # bolean estimates missing input data
 subsample_controls  <- FALSE     # bolean keeps 10% of control sgRNAs for reference.
@@ -331,8 +330,17 @@ get_file_path <- function(folder_path, file_name){
   return(full_path)
 }
 
-rmd_dir <- tryCatch(dirname(normalizePath(knitr::current_input(dir = TRUE))),
-                    error = function(e) getwd())
+# Point to the data subdirectory with my pre-processed info files
+rmd_path <- Sys.getenv("SOURCE_RMD", unset = NA_character_)
+
+rmd_dir <- if (!is.na(rmd_path) && nzchar(rmd_path)) {
+  dirname(normalizePath(rmd_path))
+} else {
+  # fallback: script dir (when running a normal .R script)
+  tryCatch(dirname(normalizePath(sys.frame(1)$ofile)),
+           error = function(e) getwd())
+}
+
 data_dir <- file.path(rmd_dir, "data")
 data_dir <- sub("auxiliary_scripts/", "", data_dir)
 
@@ -1603,6 +1611,7 @@ if (method == "rep_sublib"){
     mutate(exp = sublib)
 }
 if (method == "sum"){
+  stop("Method 'sum' is deprecated, use the option combine_for_guide_stats instead")
   maude_counts_df <- count_df_long_to_wide(count_df_long = count_df_long,
                                          print = FALSE,
                                          drop_0s = drop_0s,
