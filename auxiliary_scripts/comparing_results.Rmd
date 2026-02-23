@@ -6,42 +6,6 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-print(.libPaths())
-
-# Find a specific file by walking up parent directories
-find_up_file <- function(start_dir, filename, max_up = 15) {
-  d <- normalizePath(start_dir, mustWork = TRUE)
-
-  for (i in 0:max_up) {
-    candidate <- file.path(d, filename)
-    if (file.exists(candidate)) return(candidate)
-
-    parent <- dirname(d)
-    if (identical(parent, d)) break
-    d <- parent
-  }
-
-  stop("Could not find '", filename, "' searching upward from: ", start_dir)
-}
-
-# Now we find the location of the RMD file we are running
-# (Either data_analysis_with_MAUDE.rmd or compare_results.rmd)
-rmd_path <- Sys.getenv("SOURCE_RMD", unset = "")
-start_dir <- if (nzchar(rmd_path) && file.exists(rmd_path)) {
-  dirname(normalizePath(rmd_path, mustWork = TRUE))
-} else {
-  getwd()
-}
-
-# 1) If we are running from compare_results.rmd, we need to find the root_dir
-anchor_rmd <- find_up_file(start_dir, "data_analysis_with_MAUDE.Rmd", max_up = 1)
-
-# 2) The anchor's directory is the project root that contains /functions
-project_root_dir <- dirname(anchor_rmd)
-
-# 3) Source functions from there
-source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
-
 #===============================================================================
 # User Options (can be overrided via CLI)
 #===============================================================================
@@ -109,6 +73,42 @@ if (FALSE){
 #===============================================================================
 # Run setup 
 #===============================================================================
+print(.libPaths())
+
+# Find a specific file by walking up parent directories
+find_up_file <- function(start_dir, filename, max_up = 15) {
+  d <- normalizePath(start_dir, mustWork = TRUE)
+
+  for (i in 0:max_up) {
+    candidate <- file.path(d, filename)
+    if (file.exists(candidate)) return(candidate)
+
+    parent <- dirname(d)
+    if (identical(parent, d)) break
+    d <- parent
+  }
+
+  stop("Could not find '", filename, "' searching upward from: ", start_dir)
+}
+
+# Now we find the location of the RMD file we are running
+# (Either data_analysis_with_MAUDE.rmd or compare_results.rmd)
+rmd_path <- Sys.getenv("SOURCE_RMD", unset = "")
+start_dir <- if (nzchar(rmd_path) && file.exists(rmd_path)) {
+  dirname(normalizePath(rmd_path, mustWork = TRUE))
+} else {
+  getwd()
+}
+
+# 1) If we are running from compare_results.rmd, we need to find the root_dir
+anchor_rmd <- find_up_file(start_dir, "data_analysis_with_MAUDE.Rmd", max_up = 1)
+
+# 2) The anchor's directory is the project root that contains /functions
+project_root_dir <- dirname(anchor_rmd)
+
+# 3) Source functions from there
+source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
+
 project_setup(project_root_dir,
               user_opts,
               use_old_suffix_construction = TRUE)
