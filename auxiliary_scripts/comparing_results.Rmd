@@ -7,22 +7,6 @@ output: html_document
 
 ```{r setup, include=FALSE}
 print(.libPaths())
-knitr::opts_chunk$set(echo = FALSE)
-options(bitmapType="cairo")
-library(tidyverse)
-library(Matrix)
-library(conflicted)
-library(MAUDE)
-library(ggplot2)
-library(optparse)
-library(ggrepel)
-library(writexl)
-library(stringr)
-
-conflicts_prefer(dplyr::rename)
-conflicts_prefer(dplyr::filter)
-conflicts_prefer(dplyr::select)
-conflicts_prefer(dplyr::slice)
 
 # Find a specific file by walking up parent directories
 find_up_file <- function(start_dir, filename, max_up = 15) {
@@ -61,279 +45,73 @@ source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
 #===============================================================================
 # User Options (can be overrided via CLI)
 #===============================================================================
-# first_time will save all intermediary results, if FALSE will try to load them
-first_time      <- FALSE
+ 
+user_opts <- list(
+  # first_time will save all intermediary results, if FALSE will try to load them
+  first_time = FALSE,
 
-# Directories
-# Mandatory output_folder
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA_subsample/subsample_10"
-output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
-# output_folder   <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January"
-#optional folders for results from johns bcwithqc
-john_rf_folder  <- "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt"
-john_folder <- ""
-# If any files are to be skipped list their names here
+  # Directories
+  # Mandatory output_folder
+  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC",
+  # optional folders for results from johns bcwithqc
+  john_rf_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt",
+  john_folder    = "",
 
-skip_list <- c() # individual files, example: c("I_L3_5", "U_L1_2")
-skip_list_sublib <- c() # entire sublibraries, example: c("L4","L5")
-skip_list_sample <- c() # entire sample numbers, example c("1", "24")
-# Warning: skipping entire sublibraries and sample numbers does not work for
-# non numeric samples, or samples >9999
+  # If any files are to be skipped list their names here
+  skip_list        = c(),  # individual files, example: c("I_L3_5", "U_L1_2")
+  skip_list_sublib = c(),  # entire sublibraries, example: c("L4","L5")
+  skip_list_sample = c(),  # entire sample numbers, example c("1", "24")
 
-# Extra target list
-# If any of the controls should be considered targeting (example EGFP and AAVS1)
-# Nico HepG2 screen
-include_controls_list <- c("EGFP","AAVS1_9", "AAVS1_13", "AAVS1_18", "AAVS1_19", "AAVS1_25", "AAVS1_35")
-# include_controls_list <- c()
-# Only Specific controls
-# Liangfu wants only these controls to be used:
-# Liangfu iBeer Screen
+  # Extra target list
+  include_controls_list = c("EGFP","AAVS1_9","AAVS1_13","AAVS1_18","AAVS1_19","AAVS1_25","AAVS1_35"),
+
+  # Only Specific controls (optional; only used if you set the IF to TRUE in your Rmd)
+  # use_only_these_controls_list = use_only_these_controls_list,
+
+  # Set Options for pipeline function
+  pipeline                = "lukas",          # can be "john", "john_rf" or "lukas"
+  data_type               = "reads",          # can be "reads" or "umis"
+  method                  = "",               # can be "rep", "rep_sample", "rep_sublib", or ""
+  norm_method             = "control_median", # can be "control_median" or ""
+  combine_for_guide_stats = "sample",         # can be "", "sample", or "sublib".
+  combine_for_gene_stats  = "none",           # can be "none", "all", "sample", or "sublib"
+  recover_input           = TRUE,             # boolean estimates missing input data
+  subsample_controls      = FALSE,            # boolean keeps 10% of control sgRNAs (introduces randomness)
+  use_custom_bins         = FALSE,            # boolean to use custom bin fractions
+
+  # Set Fractions for the upper and lower bins
+  upper_lower_percentage = 0.10,
+
+  # Custom suffix and optional simplified read filtering
+  extra_suffix             = "",
+  simplified_rf_threshold  = 2000,
+  simplified_cf_threshold  = 2000,
+
+  # Are all the non-targeting control sgRNAs the same in all sublibraries/replicates?
+  same_controls_in_all_sublibraries = TRUE,
+
+  # Remove rows without any data
+  drop_0s                 = FALSE,  # boolean removes all guides with no UMIs/reads
+  strict_mode             = FALSE,  # boolean removes guides with a count of 0 in any bin
+  min_guides_per_gene     = 0,      # minimum guides required per gene (per replicate)
+  auto_combine_replicates = FALSE   # automatically combines replicas
+)
+
 if (FALSE){
-  include_controls_list <- c()
+  user_opts$include_controls_list <- c()
   use_only_these_controls_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/Liangfu_Non_targeting_sgRNA_list_Genomewide_Daniel Lib.csv"
   use_only_these_controls_list <- read.csv(use_only_these_controls_path, header = FALSE, stringsAsFactors = FALSE)$V1
 } else {
   if (exists("use_only_these_controls_list")) {
     rm(use_only_these_controls_list)
   }
-} 
-# Set Options for pipline function
-pipeline            <- "lukas"  # can be "john", "john_rf" or "lukas" use john for CellRanger and bcwithqc proccessed data.
-data_type           <- "reads"   # can be "reads" or "umis"
-method              <- ""    # can be "rep", "rep_sample", "rep_sublib", or "" 
-norm_method         <- "control_median"       # can be "control_median" or ""
-recover_input       <- TRUE     # bolean estimates missing input data
-subsample_controls  <- FALSE     # bolean keeps 10% of control sgRNAs for reference.
-use_custom_fraction <- FALSE    # bolean to use custom bin fractions. 
-combine_for_guide_stats     <- "sample" # can be "", "sample", or "sublib".
-combine_for_gene_stats <- "none" # can be "none", "all", "sample", or "sublib"
-
-
-# Set Fractions for the upper and lower bins
-upper_lower_percentage <- 0.10  # Fraction of the lower&upper bin 0.10 = 10%
-                                # The Rest is used and removed by MAUDE for normalization.
-
-# Custom suffix and optional simplified read filtering
-extra_suffix  <- ""   # custom sufix, special behaviour when set to "rf"
-                      # if extra_suffix is set to "rf" it applies simplified read filtering,  
-                      # which removes all reads below simplified_rf_threshold
-                      # "cf" does the same only for control guides
-simplified_rf_threshold <- 2000 # threshold for simplified filtering
-simplified_cf_threshold <- 2000 # threshold for simplified filtering
-
-# Are all the non-targeting control sgRNAS the same in all sublibraries/replicates?
-same_controls_in_all_sublibraries <- TRUE
-
-# Remove rows without any data 
-drop_0s <- FALSE  # bolean removes all guides with no UMIs/reads
-strict_mode <- FALSE # bolean, removes all guides which don't have UMIs for all bins. 
-min_guides_per_gene <- 0 # Minimum number of guides required to detect a gene, per replicate not total
-auto_combine_replicates <- FALSE # automatically combines replicas
-
+}  
 #===============================================================================
-# Define command-line options
+# Run setup 
 #===============================================================================
-option_list <- list(
-  make_option(c("--first_time"), type = "logical", default = first_time,
-              help = "First run flag, will save files (default: TRUE)", metavar = "LOGICAL"),
-  make_option(c("--output_folder"), type = "character", default = output_folder,
-              help = "Output folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030')", 
-              metavar = "PATH"),
-  make_option(c("--john_folder"), type = "character", default = john_folder,
-              help = "John folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john/')", 
-              metavar = "PATH"),
-  make_option(c("--john_rf_folder"), type = "character", default = john_rf_folder,
-              help = "John RF folder (default: '/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt')", 
-              metavar = "PATH"),
-  make_option(c("--skip_list"), type = "character", default = paste(skip_list, collapse = ","),
-              help = "If any files are to be skipped list their names here (comma-separated) (default: '')", 
-              metavar = "LIST"),
-  make_option(c("--skip_list_sublib"), type = "character", default = paste(skip_list_sublib, collapse = ","),
-              help = "If any sublibraries are to be skipped list their names here (comma-separated) (default: '')", 
-              metavar = "LIST"),
-  make_option(c("--skip_list_sample"), type = "character", default = paste(skip_list_sample, collapse = ","),
-              help = "If any samples are to be skipped list their names here (comma-separated) (default: '')", 
-              metavar = "LIST"),
-  make_option(c("--pipeline"), type = "character", default = pipeline, 
-              help = "Pipeline name (default: 'lukas')", metavar = "CHARACTER"),
-  make_option(c("--data_type"), type = "character", default = data_type, 
-              help = "Data type (default: 'umis')", metavar = "CHARACTER"),
-  make_option(c("--method"), type = "character", default = method, 
-              help = "Method (default: '')", metavar = "CHARACTER"),
-  make_option(c("--norm_method"), type = "character", default = norm_method, 
-              help = "Normalization method (default: '')", metavar = "CHARACTER"),
-  make_option(c("--recover_input"), type = "logical", default = recover_input, 
-              help = "Recover missing input (default: TRUE)", metavar = "LOGICAL"),
-  make_option(c("--subsample_controls"), type = "logical", default = subsample_controls, 
-              help = "Subsample control guides so some appear in the results (default: TRUE)", metavar = "LOGICAL"),
-  make_option(c("--same_controls_in_all_sublibraries"), type = "logical", default = same_controls_in_all_sublibraries, 
-              help = "Set to FALSE if the individual sublibraries/replicates have different control sgRNAs (default: TRUE)", metavar = "LOGICAL"),
-  make_option(c("--extra_suffix"), type = "character", default = extra_suffix, 
-              help = "Suffix for additional options (default: '')", metavar = "CHARACTER"),
-  make_option(c("--simplified_rf_threshold"), type = "integer", default = simplified_rf_threshold,
-              help = "Threshold for simplified filtering (default: 1000)", metavar = "INTEGER"),
-  make_option(c("--upper_lower_percentage"), type = "double", default = upper_lower_percentage,
-              help = "Fraction of the lower&upper bin (default: 0.10)", metavar = "DOUBLE"),
-  make_option(c("--drop_0s"), type = "logical", default = drop_0s, 
-              help = "Drop rows where input, upper, and lower are all 0 (default: TRUE)", metavar = "LOGICAL")
-)
-
-#===============================================================================
-# Parse the command-line arguments
-#===============================================================================
-opt_parser <- OptionParser(option_list = option_list)
-opt <- parse_args(opt_parser)
-
-#===============================================================================
-# Override the defaults with CLI values
-#===============================================================================
-first_time                        <- opt$first_time
-output_folder                     <- opt$output_folder
-john_folder                       <- opt$john_folder
-john_rf_folder                    <- opt$john_rf_folder
-skip_list                         <- strsplit(opt$skip_list, ",")[[1]]
-skip_list_sublib                  <- strsplit(opt$skip_list_sublib, ",")[[1]]
-skip_list_sample                  <- strsplit(opt$skip_list_sample, ",")[[1]]
-pipeline                          <- opt$pipeline
-data_type                         <- opt$data_type
-method                            <- opt$method
-norm_method                       <- opt$norm_method
-recover_input                     <- opt$recover_input
-subsample_controls                <- opt$subsample_controls
-same_controls_in_all_sublibraries <- opt$same_controls_in_all_sublibraries
-extra_suffix                      <- opt$extra_suffix
-simplified_rf_threshold           <- opt$simplified_rf_threshold
-upper_lower_percentage            <- opt$upper_lower_percentage
-drop_0s                           <- opt$drop_0s
-
-#===============================================================================
-# Print the options (for verification)
-#===============================================================================
-cat("first_time:                        ", first_time, "\n")
-cat("output_folder:                     ", output_folder, "\n")
-cat("john_folder:                       ", john_folder, "\n")
-cat("john_rf_folder:                    ", john_rf_folder, "\n")
-cat("skip_list:                         ", paste(skip_list, collapse = ", "), "\n")
-cat("skip_list_sublib:                  ", paste(skip_list_sublib, collapse = ", "), "\n")
-cat("skip_list_sample:                  ", paste(skip_list_sample, collapse = ", "), "\n")
-cat("pipeline:                          ", pipeline, "\n")
-cat("data_type:                         ", data_type, "\n")
-cat("method:                            ", method, "\n")
-cat("norm_method:                       ", norm_method, "\n")
-cat("recover_input:                     ", recover_input, "\n")
-cat("subsample_controls:                ", subsample_controls, "\n")
-cat("same_controls_in_all_sublibraries: ", same_controls_in_all_sublibraries, "\n")
-cat("extra_suffix:                      ", extra_suffix, "\n")
-cat("simplified_rf_threshold:           ", simplified_rf_threshold, "\n")
-cat("upper_lower_percentage:            ", upper_lower_percentage, "\n")
-cat("strict_mode:                       ", strict_mode, "\n")
-cat("min_guides_per_gene:               ", min_guides_per_gene, "\n")
-cat("drop_0s:                           ", drop_0s, "\n")
-
-
-#===============================================================================
-# Condition for adding "RI" and "D0"
-#===============================================================================
-
-if (recover_input) {
-  recover_input_suffix <- "RI"
-} else {
-  recover_input_suffix <- ""
-}
-
-if (drop_0s) {
-  drop_0s_suffix <- "D0"
-} else {
-  drop_0s_suffix <- ""
-}
-if (strict_mode) {
-  strict_mode_suffix <- "strict"
-} else {
-  strict_mode_suffix <- ""
-}
-if (auto_combine_replicates){
-  auto_combine_replicates_suffix <- "acr"
-} else {
-  auto_combine_replicates_suffix <- ""
-}
-if (min_guides_per_gene > 0){
-  min_guides_per_gene_suffix <- min_guides_per_gene
-} else {
-  min_guides_per_gene_suffix <- ""
-}
-if (combine_for_guide_stats == ""){
-  combine_for_guide_stats_suffix <- ""
-} else {
-  combine_for_guide_stats_suffix <- paste0("comb_", combine_for_guide_stats)
-}
-#===============================================================================
-# Construct the skip list
-#===============================================================================
-
-skip_list_and_suffix <- create_skip_list_and_suffix(skip_list,
-                                                    skip_list_sublib,
-                                                    skip_list_sample)
-skip_list <- skip_list_and_suffix[[1]]
-skip_suffix <- skip_list_and_suffix[[2]]
-
-#===============================================================================
-# Construct the file suffix
-#===============================================================================
-fs_parts <- c(pipeline,
-           data_type,
-           method,
-           norm_method,
-           recover_input_suffix,
-           drop_0s_suffix,
-           strict_mode_suffix,
-           min_guides_per_gene_suffix,
-           combine_for_guide_stats_suffix,
-           auto_combine_replicates_suffix,
-           skip_suffix,
-           extra_suffix)
-
-# keep only non-empty parts
-fs_parts <- fs_parts[fs_parts != ""]
-
-file_suffix <- paste0("_", paste(fs_parts, collapse = "_"), ".rds")
-
-fi_parts <- c(pipeline,
-              data_type,
-              method,
-              norm_method,
-              recover_input_suffix,
-              drop_0s_suffix,
-              strict_mode_suffix,
-              min_guides_per_gene_suffix,
-              combine_for_guide_stats_suffix,
-              auto_combine_replicates_suffix,
-              skip_suffix,
-              extra_suffix)
-
-# keep only non-empty parts
-fi_parts <- fi_parts[fi_parts != ""]
-
-file_info_suffix <- paste(fi_parts, collapse = "_")
-
-# Print the final file suffix
-cat("File Suffix: ", file_suffix, "\n")
-
-#===============================================================================
-# Construct File Paths
-#===============================================================================
-
-
-
-data_dir <- get_file_path(project_root_dir,"data")
-genome_output_folder <- make_clean_dir(output_folder, "/ref/")
-dedup_output_folder <- make_clean_dir(output_folder, "/dedup/")
-mapped_output_folder <- make_clean_dir(output_folder, "/mapped/")
-rds_output_folder <- make_clean_dir(output_folder, "/rds/")
-results_output_folder <- make_clean_dir(output_folder, "/results/")
-
-merged_sgRNA_df <- readRDS(get_file_path(rds_output_folder,
-                                         "merged_sgRNA_df.rds"))
-
+project_setup(project_root_dir,
+              user_opts,
+              use_old_suffix_construction = TRUE)
 ```
 
 ``` {r load_comparision_specific_libs, eval=TRUE}
