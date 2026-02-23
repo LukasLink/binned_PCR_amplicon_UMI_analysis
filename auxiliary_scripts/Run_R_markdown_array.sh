@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH -J RRMA_rep_GALNAC     # Job Name                # chmod +x /home/link/Run_R_markdown_array.sh
+#SBATCH -J RRMA_rep_test     # Job Name                # chmod +x /home/link/Run_R_markdown_array.sh
 #SBATCH -A lsteinme             # profile of the group                # sbatch ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/auxiliary_scripts/Run_R_markdown_array.sh   
 #SBATCH --mem 6g               # Total memory required for the job    # sbatch --dependency=afterok:24467230 /home/link/Run_R_markdown.sh
 #SBATCH -N 1                    # Number of nodes
 #SBATCH -n 1                   # Number of CPUs
 #SBATCH -t 00:08:00             # Runtime until the job is forcefully canceled
-#SBATCH --array=0-18
+#SBATCH --array=0-2
 #SBATCH --qos normal 
 #SBATCH -o /g/steinmetz/link/logs/%x_%A_%a.out
 #SBATCH -e /g/steinmetz/link/logs/%x_%A_%a.err
@@ -22,7 +22,7 @@
 MODE="script"  # <-- change this to "pdf" or "html" or "script"as needed
 # Choose if options or folders are to be alternated.
 DIFFERENT_OR_SAME="same" # can be "same" or "different"
-SAME_OPTIONS="replicates" # can be "replicates", "directories", or "subsample", "sublib_skip"
+SAME_OPTIONS="directories" # can be "replicates", "directories", or "subsample", "sublib_skip"
 # Path to the Rmd file
 RMD_FILE="/home/link/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/data_analysis_with_MAUDE.Rmd"
 
@@ -154,8 +154,8 @@ if [ "$MODE" == "script" ]; then
 
   echo "Running Rmd as plain R script..."
   Rscript --vanilla -e "knitr::purl('$RMD_FILE', output='$R_SCRIPT', documentation = 0)"
-  export SOURCE_RMD="$RMD_FILE"
-  Rscript --vanilla "$R_SCRIPT" --first_time T --output_folder "$OUTPUT_FOLDER" --pipeline "$PIPELINE" --data_type "$DATA_TYPE" --method "$METHOD" --norm_method "$NORM_METHOD" --drop_0s FALSE --recover_input TRUE --extra_suffix "$EXTRA_SUFFIX" --skip_list_sublib "$SKIP_SUBLIB"
+  export SOURCE_RMD="$RMD_FILE" #This line is important for correct file paths
+  Rscript --vanilla "$R_SCRIPT" --first_time F --output_folder "$OUTPUT_FOLDER" --pipeline "$PIPELINE" --data_type "$DATA_TYPE" --method "$METHOD" --norm_method "$NORM_METHOD" --drop_0s FALSE --recover_input TRUE --extra_suffix "$EXTRA_SUFFIX" --skip_list_sublib "$SKIP_SUBLIB"
 
 
 elif [ "$MODE" == "pdf" ]; then
