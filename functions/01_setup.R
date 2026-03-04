@@ -21,6 +21,10 @@ project_setup <- function(project_root_dir,
   library(ggrepel)
   library(writexl)
   library(stringr)
+  library(AnnotationDbi)
+  library(org.Hs.eg.db)
+  library(clusterProfiler)
+  library(ggbreak)
   
   conflicts_prefer(dplyr::rename)
   conflicts_prefer(dplyr::filter)
