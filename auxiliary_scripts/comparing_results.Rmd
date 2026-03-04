@@ -11,7 +11,7 @@ output: html_document
 #===============================================================================
  
 user_opts <- list(
-  # first_time will save all intermediary results, if FALSE will try to load them
+  # first_time will save all results, if FALSE will try to load them
   first_time = FALSE,
 
   # Directories
@@ -36,6 +36,7 @@ user_opts <- list(
   pipeline                = "lukas",          # can be "john", "john_rf" or "lukas"
   data_type               = "reads",          # can be "reads" or "umis"
   method                  = "",               # can be "rep", "rep_sample", "rep_sublib", or ""
+  # Method decides what should be treated as replicates in this experiment. 
   norm_method             = "control_median", # can be "control_median" or ""
   combine_for_guide_stats = "sample",         # can be "", "sample", or "sublib".
   combine_for_gene_stats  = "none",           # can be "none", "all", "sample", or "sublib"
@@ -47,6 +48,9 @@ user_opts <- list(
   upper_lower_percentage = 0.10,
 
   # Custom suffix and optional simplified read filtering
+  # When extra suffix is set to rf or cf perfomrs simplified read filtering 
+  # for the targeting and control guides respecitvely. 
+  # I don't think this is useful in any scenario, and will most likely remove this. 
   extra_suffix             = "",
   simplified_rf_threshold  = 2000,
   simplified_cf_threshold  = 2000,
@@ -73,7 +77,7 @@ if (FALSE){
 #===============================================================================
 # Run setup 
 #===============================================================================
-print(.libPaths())
+print(.libPaths()) # This is here for debugging purposes, can be commented out. 
 
 # Find a specific file by walking up parent directories
 find_up_file <- function(start_dir, filename, max_up = 15) {
@@ -103,7 +107,8 @@ start_dir <- if (nzchar(rmd_path) && file.exists(rmd_path)) {
 # 1) If we are running from compare_results.rmd, we need to find the root_dir
 anchor_rmd <- find_up_file(start_dir, "data_analysis_with_MAUDE.Rmd", max_up = 1)
 
-# 2) The anchor's directory is the project root that contains /functions
+# 2) The anchor's directory is the project root that contains the functions and
+# data subdirectory
 project_root_dir <- dirname(anchor_rmd)
 
 # 3) Source functions from there
@@ -112,6 +117,8 @@ source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
 project_setup(project_root_dir,
               user_opts,
               use_old_suffix_construction = TRUE)
+# The old_suffix is here so I don't run into compatibility issues with my
+# already analysed data. Should be removed in the future. 
 ```
 
 ``` {r load_comparision_specific_libs, eval=TRUE}
