@@ -5,7 +5,10 @@ plot_significance_by_rank <- function(Hits_df,
                                       box_padding = 0.8,
                                       no_text = FALSE,
                                       signif_lines = FALSE,
-                                      mark_all_signif_level = NULL) {
+                                      mark_all_signif_level = NULL,
+                                      break_in_plot = c(),
+                                      top_padding = 0,
+                                      custom_title = NULL) {
   # Create rank column
   Hits_df <- Hits_df %>%
     mutate(rank = rank(significanceZ, ties.method = "first"))
@@ -28,15 +31,22 @@ plot_significance_by_rank <- function(Hits_df,
   x_max_box <- max(Hits_df$rank) + 500
   
   # Start base plot
+  # Base plot without break
   p <- ggplot(Hits_df, aes(x = rank, y = significanceZ)) +
     geom_point(color = "lightgrey", size = 1) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.3) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 0.3) +
     theme_bw() +
     labs(
       x = "Gene rank",
       y = "Significance Z-score",
-      title = "Significance Z-score by gene rank"
+      title = ifelse(
+       is.null(custom_title),
+       "Significance Z-score by gene rank",
+       custom_title
+      )
     )
+
+
   
   # Mark control (NA in symbol column)
   if (mark_cntrl && "symbol" %in% names(Hits_df)) {
@@ -103,7 +113,7 @@ plot_significance_by_rank <- function(Hits_df,
             yintercept = y_pos,
             linetype = "dashed",
             color = "red",
-            size = 0.3
+            linewidth = 0.3
           )
       }
       
@@ -117,7 +127,7 @@ plot_significance_by_rank <- function(Hits_df,
             yintercept = y_neg,
             linetype = "dashed",
             color = "red",
-            size = 0.3
+            linewidth = 0.3
           )
       }
     }
@@ -164,6 +174,8 @@ plot_significance_by_rank <- function(Hits_df,
     special_df <- Hits_df %>% filter(symbol %in% mark_special)
     
     if (nrow(special_df) > 0) {
+      
+      # always add the special points
       p <- p +
         geom_point(
           data = special_df,
@@ -171,17 +183,70 @@ plot_significance_by_rank <- function(Hits_df,
           shape = 17,
           color = "orange",
           size = 4
-        ) +
-        geom_text_repel(
-          data = special_df,
-          aes(x = rank, y = significanceZ, label = symbol),
-          color = "orange",
-          size = 4,
-          box.padding = 1,
-          nudge_x = ifelse(special_df$significanceZ > 0, -500, 500),
-          nudge_y = ifelse(special_df$significanceZ > 0, y_range * (0.05), y_range * (-0.05)),
-          force = 4
         )
+      
+      # helper: keep your existing nudges
+      special_df$nudge_x <- ifelse(special_df$significanceZ > 0, -900, 900)
+      special_df$nudge_y <- ifelse(
+        special_df$significanceZ > 0,
+        y_range * 0.1,
+        y_range * (-0.1)
+      )
+      
+      # if we have a y-break (two numbers), split into two repel layers
+      if (length(break_in_plot) == 2) {
+        y1 <- min(break_in_plot)
+        y2 <- max(break_in_plot)
+        
+        p <- p +
+          geom_text_repel(
+            data = subset(special_df, significanceZ <= y1),
+            aes(x = rank, y = significanceZ, label = symbol),
+            color = "orange",
+            size = 4,
+            box.padding = 1,
+            nudge_x = subset(special_df, significanceZ <= y1)$nudge_x,
+            nudge_y = subset(special_df, significanceZ <= y1)$nudge_y,
+            force = 4,
+            ylim = c(-Inf, y1)   # constrain repel + drawing to the lower panel
+          ) +
+          geom_text_repel(
+            data = subset(special_df, significanceZ >= y2),
+            aes(x = rank, y = significanceZ, label = symbol),
+            color = "orange",
+            size = 4,
+            box.padding = 1,
+            nudge_x = subset(special_df, significanceZ >= y2)$nudge_x,
+            #nudge_y = subset(special_df, significanceZ >= y2)$nudge_y,
+            force = 4,
+            ylim = c(y2, Inf)    # constrain repel + drawing to the upper panel
+          )
+        
+      } else {
+        # otherwise: keep your current single-layer behavior
+        p <- p +
+          geom_text_repel(
+            data = special_df,
+            aes(x = rank, y = significanceZ, label = symbol),
+            color = "orange",
+            size = 4,
+            box.padding = 1,
+            nudge_x = special_df$nudge_x,
+            nudge_y = special_df$nudge_y,
+            force = 4
+          )
+      }
+    }
+  }
+  # Add Break if necessary
+  if (length(break_in_plot) == 2){
+    p <- p + 
+      geom_blank(aes(x = 0, y = y_max+top_padding)) +
+      scale_y_break(break_in_plot)
+    
+  } else {
+    if (length(break_in_plot) != 0){
+      stop("'break_in_plot' must be 'c(start_of_break,end_of_break)'")
     }
   }
   return(p)
