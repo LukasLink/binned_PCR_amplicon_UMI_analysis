@@ -121,6 +121,27 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
                cardio_IPSC_TPM_Xie = both),
       by = c("entrez" = "entrez_id")
     )
+  
+  # Add Go term information
+  go_map <- AnnotationDbi::select(
+    org.Hs.eg.db,
+    keys     = as.character(export_df$entrez),
+    keytype  = "ENTREZID",
+    columns  = c("GO", "ONTOLOGY")
+  )
+  
+  go_collapsed <- go_map %>%
+    mutate(ENTREZID = as.character(ENTREZID)) %>%
+    group_by(ENTREZID) %>%
+    summarise(
+      GO_terms = paste(unique(na.omit(GO)), collapse = ";"),
+      GO_ontology = paste(unique(na.omit(ONTOLOGY)), collapse = ";"),
+      .groups = "drop"
+    )
+  
+  export_df <- export_df %>%
+    left_join(go_collapsed, by = c("entrez" = "ENTREZID"))
+  
   return(export_df)
 }
 
