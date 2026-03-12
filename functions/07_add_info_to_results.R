@@ -123,11 +123,13 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     )
   
   # Add Go term information
-  go_map <- AnnotationDbi::select(
-    org.Hs.eg.db,
-    keys     = as.character(export_df$entrez),
-    keytype  = "ENTREZID",
-    columns  = c("GO", "ONTOLOGY")
+  go_map <- suppressMessages(
+    AnnotationDbi::select(
+      org.Hs.eg.db,
+      keys     = as.character(export_df$entrez),
+      keytype  = "ENTREZID",
+      columns  = c("GO", "ONTOLOGY")
+    )
   )
   
   go_collapsed <- go_map %>%
@@ -136,6 +138,7 @@ add_info_to_gene_stats <- function(maude_guide_stats, maude_gene_stats){
     summarise(
       GO_terms = paste(unique(na.omit(GO)), collapse = ";"),
       GO_ontology = paste(unique(na.omit(ONTOLOGY)), collapse = ";"),
+      go_count = n_distinct(na.omit(GO)),   # annotation specificity
       .groups = "drop"
     )
   
