@@ -1816,8 +1816,10 @@ automate_subsample_comparison(FDR_threshold = 0.05)
 
 ``` {r get_validation_list, eval=False}
 source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
+dual_rep_dir <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/"
+
 all_conjugates_overlap_df <- read.csv2(
-  "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/Explorative_Hits_Overlap_between_conjugates.csv",
+  file.path(dual_rep_dir,"Explorative_Hits_Overlap_between_conjugates.csv"),
   header = TRUE
 ) 
 all_conjugates_overlap_df <- calculate_category_based_Z_score(all_conjugates_overlap_df)
@@ -1833,12 +1835,12 @@ validation_candidates <- filter_candidates_expression(
 validation_hits <- select_validation_hits_balanced_classes(validation_candidates, n = 290)$selected_df
 validation_hits <- calculate_category_based_Z_score(validation_hits)
 
-saveRDS(all_conjugates_overlap_classified, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/all_conjugates_overlap_classified.rds")
-saveRDS(validation_hits, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/validation_hits.rds")
+saveRDS(all_conjugates_overlap_classified, file.path(dual_rep_dir, "all_conjugates_overlap_classified.rds"))
+saveRDS(validation_hits, file.path(dual_rep_dir, "validation_hits.rds"))
 
 ```
 
-``` {r barplot_Z-score_distribution, eval=False}
+``` {r histogram_Z-score_distribution, eval=False}
 plot_significanceZ_histogram(all_conjugates_overlap_df, normalize = TRUE, plot_title = "Explorative Hits", fill_color = "forestgreen")
 plot_significanceZ_histogram(validation_hits, normalize = TRUE, plot_title = "Class Distribution Validation selection", fill_color = "steelblue")
 plot_significanceZ_histogram(all_conjugates_overlap_df, normalize = FALSE, plot_title = "Explorative Hits", fill_color = "forestgreen")
@@ -1846,20 +1848,24 @@ plot_significanceZ_histogram(validation_hits, normalize = FALSE, plot_title = "C
 ```
 
 ``` {r horizontal_barplot_broad_class_percentage, eval=False}
+# All Hits
 plot_class_distribution(
   df_all = all_conjugates_overlap_classified,
   df_validation = validation_hits
 )
+# All Hits
 plot_class_distribution(
   df_all = all_conjugates_overlap_classified,
   df_validation = validation_hits,
   sign_split = TRUE
 )
+# shared Hits
 plot_class_distribution(
   df_all = all_conjugates_overlap_classified %>% filter(!category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
   df_validation = validation_hits %>% filter(!category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
   sign_split = TRUE
 )
+# Unique Hits
 plot_class_distribution(
   df_all = all_conjugates_overlap_classified %>% filter(category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
   df_validation = validation_hits %>% filter(category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
