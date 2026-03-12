@@ -23,13 +23,14 @@ project_setup <- function(project_root_dir,
   library(stringr)
   library(AnnotationDbi)
   library(org.Hs.eg.db)
-  library(clusterProfiler)
-  library(ggbreak)
+
   
   conflicts_prefer(dplyr::rename)
   conflicts_prefer(dplyr::filter)
   conflicts_prefer(dplyr::select)
   conflicts_prefer(dplyr::slice)
+  conflicts_prefer(dplyr::first)
+  conflicts_prefer(base::setdiff)
   
   #===============================================================================
   option_list <- list(
