@@ -16,7 +16,7 @@ user_opts <- list(
 
   # Directories
   # Mandatory output_folder
-  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC",
+  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA",
   # optional folders for results from johns bcwithqc
   john_rf_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt",
   john_folder    = "",
@@ -119,12 +119,30 @@ project_setup(project_root_dir,
               use_old_suffix_construction = TRUE)
 # The old_suffix is here so I don't run into compatibility issues with my
 # already analysed data. Should be removed in the future. 
-```
 
-``` {r load_comparision_specific_libs, eval=TRUE}
+################################################################################
+############# LOAD COMPARISION SPECIFIC LIBS ###################################
 library(VennDiagram)
 library(grid)
 library(gridExtra)
+library(clusterProfiler)
+library(ggbreak)
+library(STRINGdb)
+library(igraph)
+library(GO.db)
+library(scales)
+```
+
+``` {r load_comparision_specific_libs, eval=TRUE}
+# library(VennDiagram)
+# library(grid)
+# library(gridExtra)
+# library(clusterProfiler)
+# library(ggbreak)
+# library(STRINGdb)
+# library(igraph)
+# library(GO.db)
+# library(scales)
 ```
 # The following codeblock exists to do some basic familiarization with MAUDE,
 and to troubleshoot it if things fail. You can ignore it.  
@@ -1791,10 +1809,388 @@ if (FALSE){
   move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/2/HepG2_dual_rep_PA_subsample", subsample_prefix = "B")
   move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/3/HepG2_dual_rep_PA_subsample", subsample_prefix = "C")
   move_subsamples("/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/4/HepG2_dual_rep_PA_subsample", subsample_prefix = "D")
-}
+
  
 automate_subsample_comparison(FDR_threshold = 0.05)
 ```
+
+``` {r get_validation_list, eval=False}
+source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
+all_conjugates_overlap_df <- read.csv2(
+  "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/Explorative_Hits_Overlap_between_conjugates.csv",
+  header = TRUE
+) 
+all_conjugates_overlap_df <- calculate_category_based_Z_score(all_conjugates_overlap_df)
+all_conjugates_overlap_classified <- assign_broad_classes_and_go(all_conjugates_overlap_df)
+
+validation_candidates <- filter_candidates_expression(
+  hits_df = all_conjugates_overlap_classified,
+  expression_threshold = 0,
+  method = "AND"
+  )$kept
+
+# validation_hits <- simple_validation_selection(validation_candidates, n = 290)
+validation_hits <- select_validation_hits_balanced_classes(validation_candidates, n = 290)$selected_df
+validation_hits <- calculate_category_based_Z_score(validation_hits)
+
+saveRDS(all_conjugates_overlap_classified, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/all_conjugates_overlap_classified.rds")
+saveRDS(validation_hits, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/validation_hits.rds")
+
+```
+
+``` {r barplot_Z-score_distribution, eval=False}
+plot_significanceZ_histogram(all_conjugates_overlap_df, normalize = TRUE, plot_title = "Explorative Hits", fill_color = "forestgreen")
+plot_significanceZ_histogram(validation_hits, normalize = TRUE, plot_title = "Class Distribution Validation selection", fill_color = "steelblue")
+plot_significanceZ_histogram(all_conjugates_overlap_df, normalize = FALSE, plot_title = "Explorative Hits", fill_color = "forestgreen")
+plot_significanceZ_histogram(validation_hits, normalize = FALSE, plot_title = "Class Distribution Validation selection", fill_color = "steelblue")
+```
+
+``` {r horizontal_barplot_broad_class_percentage, eval=False}
+plot_class_distribution(
+  df_all = all_conjugates_overlap_classified,
+  df_validation = validation_hits
+)
+plot_class_distribution(
+  df_all = all_conjugates_overlap_classified,
+  df_validation = validation_hits,
+  sign_split = TRUE
+)
+plot_class_distribution(
+  df_all = all_conjugates_overlap_classified %>% filter(!category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
+  df_validation = validation_hits %>% filter(!category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
+  sign_split = TRUE
+)
+plot_class_distribution(
+  df_all = all_conjugates_overlap_classified %>% filter(category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
+  df_validation = validation_hits %>% filter(category %in% c("unique_PA", "unique_DCA", "unique_GalNAc")),
+  sign_split = TRUE
+)
+
+```
+
+``` {r filter_candidates_functions, eval=False}
+
+
+validation_hits_s1 <- filter_candidates_expression(
+  hits_df = explorative_hits,
+  expression_threshold = 0,
+  method = "AND"
+  )$kept
+hits_removed_bc_expression <- filter_candidates_expression(
+  hits_df = explorative_hits,
+  expression_threshold = 0,
+  method = "AND"
+  )$removed
+
+if (first_time){
+  pathways_Z_enriched <- perform_pathway_analysis(
+    file_info_suffix,
+    FDR_threshold = 0.05,
+    go_enrichment = "ALL",
+    go_terms_qvalueCutoff = 0.05)
+  pathways_Z_enriched_all <- pathways_Z_enriched$gsea_all
+  pathways_Z_enriched_consensus <- pathways_Z_enriched$gsea_consensus
+  
+  
+  pathways_hit_enriched <- perform_pathway_analysis(
+    file_info_suffix,
+    FDR_threshold = 0.05,
+    go_enrichment = "ALL",
+    method = "enrichGO",
+    consensus = TRUE,
+    enrichGO_consensus_df = explorative_hits,
+    go_terms_qvalueCutoff = 0.05)
+  
+  
+  ####
+  # Manually adding GO terms, that sound intersting, but did not pass consensus calling
+  manual_pathway_additions <- c(
+    "protein localization to vacuole",
+    "endocytic recycling",
+    "lysosome localization",
+    "regulation of ER to Golgi vesicle-mediated transport",
+    "vacuolar localization",
+    "vesicle transport along microtubule",
+    "exocytic process"
+  )
+  ####
+  
+  pathways_combined <- bind_rows(
+    pathways_hit_enriched,
+    pathways_Z_enriched_consensus,
+    pathways_Z_enriched_all %>% 
+      filter(Description %in% manual_pathway_additions)) %>%
+    distinct(ID, .keep_all = TRUE)
+  
+  gene_centrality <- get_gene_centrality(file_info_suffix, pathways_combined, use_local = TRUE) %>% 
+    filter(!entrez %in% hits_removed_bc_expression$entrez)
+  
+  validation_results <- select_validation_genes(
+    core_genes = gene_centrality,
+    hits_df = explorative_hits,
+    consensus_pathways = pathways_combined,
+    top_n = 1
+  )
+  
+  val_validation_genes <- validation_results$validation_genes
+  val_hits_no_pathway <- validation_results$hits_without_pathway
+  val_not_picked <- validation_results$hits_not_selected
+  val_pathways_no_hits <- validation_results$pathways_without_hits
+  
+  pathway_analysis_results <- list(
+    val_validation_genes = val_validation_genes,
+    val_hits_no_pathway = val_hits_no_pathway,
+    val_not_picked = val_not_picked,
+    val_pathways_no_hits = val_pathways_no_hits,
+    gene_centrality = gene_centrality,
+    pathways_combined = pathways_combined,
+    pathways_Z_enriched_all = pathways_Z_enriched_all,
+    pathways_Z_enriched_consensus = pathways_Z_enriched_consensus
+  )
+  
+  saveRDS(
+    pathway_analysis_results,
+    file.path(rds_output_folder,
+              paste0(file_info_suffix,"_pathway_analysis_results.rds")))
+} else {
+  pathway_analysis_results <- readRDS(file.path(
+    rds_output_folder,
+    paste0(file_info_suffix,"_pathway_analysis_results.rds")))
+
+  val_validation_genes <- pathway_analysis_results$val_validation_genes
+  val_hits_no_pathway <- pathway_analysis_results$val_hits_no_pathway
+  val_not_picked <- pathway_analysis_results$val_not_picked
+  val_pathways_no_hits <- pathway_analysis_results$val_pathways_no_hits
+  gene_centrality <- pathway_analysis_results$gene_centrality
+  pathways_combined <- pathway_analysis_results$pathways_combined
+  pathways_Z_enriched_all <- pathway_analysis_results$pathways_Z_enriched_all
+  pathways_Z_enriched_consensus <- pathway_analysis_results$pathways_Z_enriched_consensus
+}
+
+# saveRDS(pathway_analysis_results_PA, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/pathway_analysis_results_PA")
+# saveRDS(pathway_analysis_results_DCA, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/pathway_analysis_results_DCA")
+# saveRDS(pathway_analysis_results_GALNAC, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/pathway_analysis_results_GALNAC")
+
+val_validation_genes_combined <- bind_rows(
+  pathway_analysis_results_PA$val_validation_genes %>%
+    mutate(pathway_analysis = "PA"),
+  pathway_analysis_results_DCA$val_validation_genes %>%
+    mutate(pathway_analysis = "DCA"),
+  pathway_analysis_results_GALNAC$val_validation_genes %>%
+    mutate(pathway_analysis = "GALNAC")) %>% 
+  distinct(entrez, .keep_all = TRUE)
+
+val_not_picked_combined <- bind_rows(
+  pathway_analysis_results_PA$val_not_picked %>%
+    mutate(pathway_analysis = "PA"),
+  pathway_analysis_results_DCA$val_not_picked %>%
+    mutate(pathway_analysis = "DCA"),
+  pathway_analysis_results_GALNAC$val_not_picked%>%
+    mutate(pathway_analysis = "GALNAC")) %>%
+  distinct(entrez, .keep_all = TRUE) %>% 
+  filter(!entrez %in% val_validation_genes_combined$entrez)
+
+val_hits_no_pathway_combined <- bind_rows(
+  pathway_analysis_results_PA$val_hits_no_pathway %>%
+    mutate(pathway_analysis = "PA"),
+  pathway_analysis_results_DCA$val_hits_no_pathway %>%
+    mutate(pathway_analysis = "DCA"),
+  pathway_analysis_results_GALNAC$val_hits_no_pathway%>%
+    mutate(pathway_analysis = "GALNAC")) %>%
+  distinct(entrez, .keep_all = TRUE) %>% 
+  filter(!entrez %in% val_validation_genes_combined$entrez) %>% 
+  filter(!entrez %in% val_not_picked_combined$entrez)
+
+
+category_summary_df <- full_join(
+  all_conjugates_overlap_df %>% count(category, name = "n_all"),
+  all_conjugates_overlap_df %>% 
+    filter(entrez %in% validation_hits$entrez) %>%
+    count(category, name = "n_validation"),
+  by = "category"
+) %>%
+  full_join(
+    all_conjugates_overlap_df %>% 
+      filter(entrez %in% val_hits_no_pathway_combined$entrez) %>% 
+      count(category, name = "n_no_pathway"),
+    by = "category"
+  ) %>%
+  full_join(
+    all_conjugates_overlap_df %>% 
+      filter(entrez %in% val_not_picked_combined$entrez) %>% 
+      count(category, name = "n_not_picked"),
+    by = "category"
+  ) %>%
+  mutate(across(-category, ~replace_na(., 0)))
+
+plot_df <- category_summary_df %>%
+  tidyr::pivot_longer(
+    cols = c(n_all, n_validation, n_no_pathway, n_not_picked),
+    names_to = "group",
+    values_to = "count"
+  ) %>%
+  mutate(
+    group = factor(
+      group,
+      levels = c("n_all", "n_validation", "n_no_pathway", "n_not_picked"),
+      labels = c("All", "Validation", "No pathway", "Not picked")
+    )
+  )
+
+p <- ggplot(plot_df, aes(x = group, y = count, fill = group)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = count), vjust = -0.3, size = 3.5) +
+  facet_grid(category ~ ., scales = "free_y", switch = "y") +
+  scale_fill_manual(values = c(
+    "All" = "grey40",
+    "Validation" = "forestgreen",
+    "No pathway" = "tomato",
+    "Not picked" = "steelblue"
+  )) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +
+  labs(
+    x = NULL,
+    y = "Count"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.placement = "outside",
+    strip.background = element_blank(),
+    panel.spacing.y = unit(1.2, "lines")
+  )
+
+ggsave(
+  "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/category_barplots.png",
+  plot = p,
+  width = 7,
+  height = 12
+)
+
+
+draw_category_venn <- function(df, value_col, main_title = value_col) {
+  d <- setNames(df[[value_col]], df$category)
+  
+  venn.plot <- draw.triple.venn(
+    area1 = d["unique_DCA"] + d["shared_DCA_PA"] + d["shared_DCA_GalNAc"] + d["shared_all_three"],
+    area2 = d["unique_PA"] + d["shared_DCA_PA"] + d["shared_PA_GalNAc"] + d["shared_all_three"],
+    area3 = d["unique_GalNAc"] + d["shared_DCA_GalNAc"] + d["shared_PA_GalNAc"] + d["shared_all_three"],
+    
+    n12 = d["shared_DCA_PA"] + d["shared_all_three"],
+    n13 = d["shared_DCA_GalNAc"] + d["shared_all_three"],
+    n23 = d["shared_PA_GalNAc"] + d["shared_all_three"],
+    n123 = d["shared_all_three"],
+    
+    category = c("DCA", "PA", "GalNAc"),
+    fill = c("tomato", "steelblue", "forestgreen"),
+    alpha = 0.5,
+    cex = 1.3,
+    cat.cex = 1.2,
+    cat.pos = c(-20, 20, 180),
+    main = main_title
+  )
+  
+  grid.newpage()
+  grid.draw(venn.plot)
+}
+draw_category_venn(category_summary_df, "n_all", "All")
+draw_category_venn(category_summary_df, "n_all", "All")
+
+
+draw_category_venn(category_summary_df, "n_all", "All")
+draw_category_venn(category_summary_df, "n_validation", "Validation")
+draw_category_venn(category_summary_df, "n_no_pathway", "No pathway")
+draw_category_venn(category_summary_df, "n_not_picked", "Not picked")
+```
+
+``` {r filter_candidates, eval=False}
+nsZh <- TRUE
+
+val_validation_genes_combined <- val_validation_genes_combined %>%
+  left_join(
+    all_conjugates_overlap_df %>% select(entrez, significanceZ),
+    by = "entrez",
+    suffix = c("", ".new")
+  ) %>%
+  mutate(significanceZ = significanceZ.new) %>%
+  select(-significanceZ.new)
+
+
+
+
+plot_significanceZ_histogram(val_validation_genes_combined, normalize = nsZh, plot_title = "GO Term Hits", fill_color = "darkgreen")
+plot_significanceZ_histogram(val_not_picked, normalize = nsZh, plot_title = "Hits not chosen", fill_color = "orange")
+plot_significanceZ_histogram(val_hits_no_pathway, normalize = nsZh, plot_title = "Hits that don't match enriched GO Terms", fill_color = "red")
+
+```
+
+
+
+``` {r Comparing_GO-terms_of_different_moieties, eval=FALSE}
+pathways_hit_enriched_by_cat <- run_pathway_by_category(
+  df = all_conjugates_overlap_df,
+  file_info_suffix = file_info_suffix,
+  method = "enrichGO"
+)
+saveRDS(pathways_hit_enriched_by_cat, "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/pathways_enriched_in_hits.rds")
+pathways_all <- pathways_hit_enriched_by_cat$shared_all_three
+pathways_DCA_GAL <- pathways_hit_enriched_by_cat$shared_DCA_GalNAc
+pathways_DCA_PA <- pathways_hit_enriched_by_cat$shared_DCA_PA
+pathways_PA_GAL <- pathways_hit_enriched_by_cat$shared_PA_GalNAc
+pathways_PA <- pathways_hit_enriched_by_cat$unique_PA
+pathways_DCA <- pathways_hit_enriched_by_cat$unique_DCA
+pathways_GAL <- pathways_hit_enriched_by_cat$unique_GalNAc
+
+all_conjugates_df <- calculate_category_based_Z_score(all_conjugates_overlap_df)
+
+all_conjugates_pos_df <- all_conjugates_df %>% filter(significanceZ > 0)
+all_conjugates_neg_df <- all_conjugates_df %>% filter(significanceZ < 0)
+
+# positive hits
+pathways_hit_enriched_by_cat_pos <- run_pathway_by_category(
+  df = all_conjugates_pos_df,
+  file_info_suffix = file_info_suffix,
+  method = "enrichGO"
+)
+
+saveRDS(
+  pathways_hit_enriched_by_cat_pos,
+  "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/pathways_enriched_in_pos_hits.rds"
+)
+
+pathways_all_pos     <- pathways_hit_enriched_by_cat_pos$shared_all_three
+pathways_DCA_GAL_pos <- pathways_hit_enriched_by_cat_pos$shared_DCA_GalNAc
+pathways_DCA_PA_pos  <- pathways_hit_enriched_by_cat_pos$shared_DCA_PA
+pathways_PA_GAL_pos  <- pathways_hit_enriched_by_cat_pos$shared_PA_GalNAc
+pathways_PA_pos      <- pathways_hit_enriched_by_cat_pos$unique_PA
+pathways_DCA_pos     <- pathways_hit_enriched_by_cat_pos$unique_DCA
+pathways_GAL_pos     <- pathways_hit_enriched_by_cat_pos$unique_GalNAc
+pathways_allhits_pos <- pathways_hit_enriched_by_cat_pos$All_Hits
+
+
+# negative hits
+pathways_hit_enriched_by_cat_neg <- run_pathway_by_category(
+  df = all_conjugates_neg_df,
+  file_info_suffix = file_info_suffix,
+  method = "enrichGO"
+)
+
+saveRDS(
+  pathways_hit_enriched_by_cat_neg,
+  "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep/pathways_enriched_in_neg_hits.rds"
+)
+
+pathways_all_neg     <- pathways_hit_enriched_by_cat_neg$shared_all_three
+pathways_DCA_GAL_neg <- pathways_hit_enriched_by_cat_neg$shared_DCA_GalNAc
+pathways_DCA_PA_neg  <- pathways_hit_enriched_by_cat_neg$shared_DCA_PA
+pathways_PA_GAL_neg  <- pathways_hit_enriched_by_cat_neg$shared_PA_GalNAc
+pathways_PA_neg      <- pathways_hit_enriched_by_cat_neg$unique_PA
+pathways_DCA_neg     <- pathways_hit_enriched_by_cat_neg$unique_DCA
+pathways_GAL_neg     <- pathways_hit_enriched_by_cat_neg$unique_GalNAc
+pathways_allhits_neg <- pathways_hit_enriched_by_cat_neg$All_Hits
+
+``` 
 
 ``` {r control_distribution_heatmap, eval=FALSE}
 library(pheatmap)
