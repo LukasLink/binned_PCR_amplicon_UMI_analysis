@@ -16,7 +16,7 @@ user_opts <- list(
 
   # Directories
   # Mandatory output_folder
-  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC",
+  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA",
   # optional folders for results from johns bcwithqc
   john_rf_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt",
   john_folder    = "",
@@ -645,11 +645,6 @@ maude_gene_stats <- readRDS(file.path(rds_output_folder,
 
 
 ```
-## Functions that add more information to the results, like the gene symbol
-
-```{r check_MAUDE_results, eval=TRUE}
-
-```
 
 
 ## Generate Waterfall plots for the data
@@ -704,7 +699,8 @@ p <- plot_significance_by_rank(Hits_current_settings,
                           custom_title = "Significance Z-score by gene rank for GalNAc-siRNA")
 print(p)
 ggsave("/g/steinmetz/link/sharing/nico/poster_plots/Waterfall_GalNAc.pdf", p)
-source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
+#source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
+
 # Just highlight controls
 plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
 plot_significance_by_rank(export_df, mark_cntrl = TRUE, mark_N_top_hits = 3, box_padding = 0.9)
