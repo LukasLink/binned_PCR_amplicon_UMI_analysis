@@ -296,6 +296,76 @@ get_gene_centrality <- function(file_info_suffix,
   return(core_genes)
 }
 
+plot_string_from_saved_hits <- function(
+    dual_rep_dir,
+    species = 9606,
+    score_threshold = 400,
+    min_genes = 4,
+    max_clusters_to_plot = 4,
+    use_local = FALSE
+) {
+  
+  hit_files <- list.files(
+    dual_rep_dir,
+    pattern = "_hits\\.rds$",
+    recursive = TRUE,
+    full.names = TRUE
+  )
+  
+  string_db_path <- if (use_local) data_dir else ""
+  
+  string_db <- STRINGdb$new(
+    version = "12.0",
+    species = species,
+    score_threshold = score_threshold,
+    input_directory = string_db_path
+  )
+  
+  for (f in hit_files) {
+    message("Processing: ", f)
+    
+    hits_df <- readRDS(f)
+    
+    if (!("entrez" %in% colnames(hits_df))) next
+    if (nrow(hits_df) < min_genes) next
+    
+    mapped <- string_db$map(
+      hits_df,
+      "entrez",
+      removeUnmappedRows = TRUE,
+      quiet = TRUE
+    )
+    
+    mapped <- mapped[!duplicated(mapped$STRING_id), , drop = FALSE]
+    
+    if (nrow(mapped) < min_genes) next
+    
+    out_dir <- dirname(f)
+    base_name <- sub("_hits\\.rds$", "", basename(f))
+    
+    # full network PNG from STRING
+    string_db$get_png(
+      mapped$STRING_id,
+      file = file.path(out_dir, paste0(base_name, "_STRING_network.png"))
+    )
+    
+    # cluster-based plots
+    clusters <- string_db$get_clusters(mapped$STRING_id)
+    
+    if (length(clusters) > 0) {
+      for (i in seq_len(min(length(clusters), max_clusters_to_plot))) {
+        png(
+          filename = file.path(out_dir, paste0(base_name, "_STRING_cluster_", i, ".png")),
+          width = 1800,
+          height = 1400,
+          res = 220
+        )
+        string_db$plot_network(clusters[[i]], add_link = FALSE, add_summary = TRUE)
+        dev.off()
+      }
+    }
+  }
+}
 select_validation_genes <- function(core_genes,
                                     hits_df,
                                     consensus_pathways,
@@ -489,42 +559,429 @@ run_pathway_by_category <- function(df, file_info_suffix,
                                     go_enrichment = "ALL",
                                     method = "enrichGO",
                                     consensus = TRUE,
-                                    go_terms_qvalueCutoff = 0.05) {
+                                    go_terms_qvalueCutoff = 0.05,
+                                    include_shared_hits = NULL,
+                                    split_pos_neg = FALSE,
+                                    plot_enrichment = FALSE,
+                                    image_save_folder = NULL,
+                                    use_prior_results = FALSE) {
   
-  # split dataframe by category
-  split_dfs <- split(df, df[[category_col]])
+  # ----------------------------------------------------------------------------
+  # BEHAVIOUR OF THE NEW PARAMETERS
+  #
+  # include_shared_hits:
+  #   Default: NULL
+  #   If NULL, the function behaves exactly as before:
+  #     - df is split only by category_col
+  #
+  #   If include_shared_hits is provided as a character vector / list of strings:
+  #     - The FIRST entry is interpreted as the name of a category in category_col
+  #       that should always be included in every split.
+  #     - The REMAINING entries are interpreted as search strings that are matched
+  #       against the category name.
+  #
+  #   For each category-specific subset:
+  #     1. Start with all rows belonging to that category itself
+  #     2. Add all rows from the "always include" category
+  #     3. Check how many of the remaining include_shared_hits strings are found
+  #        in the category name
+  #          - if more than one string is found:
+  #              do nothing further
+  #              (only category rows + always-include rows are used)
+  #          - if exactly one string is found:
+  #              look for a dataframe column with exactly that name
+  #              and include all rows where that column is TRUE / "TRUE"
+  #
+  #   Example:
+  #     include_shared_hits = c("shared_all", "DCA", "PA")
+  #
+  #     - category = "DCA_only"
+  #         -> contains exactly one match: "DCA"
+  #         -> subset = rows from "DCA_only"
+  #                     + rows from "shared_all"
+  #                     + rows where df$DCA is TRUE
+  #
+  #     - category = "shared_DCA_PA"
+  #         -> contains two matches: "DCA" and "PA"
+  #         -> subset = rows from "shared_DCA_PA"
+  #                     + rows from "shared_all"
+  #         -> NO extra TRUE-column inclusion
+  #
+  #   To avoid duplicates introduced by the extra inclusion logic, combined
+  #   subsets are deduplicated based on the sgRNA column.
+  #
+  #
+  # split_pos_neg:
+  #   Default: FALSE
+  #   If TRUE, each category-specific subset is split again based on significanceZ:
+  #     - significanceZ > 0  -> "<category>_positive"
+  #     - significanceZ < 0  -> "<category>_negative"
+  #
+  #   Rows with significanceZ == 0 or NA are not included in either split.
+  #
+  #
+  # plot_enrichment:
+  #   Default: FALSE
+  #   Currently only included as a placeholder parameter for later plotting logic.
+  #   It does not yet alter the behaviour of this function.
+  # ----------------------------------------------------------------------------
   
-  # run pathway analysis for each subset
-  results <- lapply(names(split_dfs), function(cat) {
-    message("Running pathway analysis for category: ", cat)
+  # helper: detect TRUE-like values for logical or character columns
+  is_true_like <- function(x) {
+    if (is.logical(x)) {
+      return(!is.na(x) & x)
+    }
+    x_chr <- toupper(trimws(as.character(x)))
+    !is.na(x) & x_chr == "TRUE"
+  }
+  
+  # --------------------------------------------------------------------------
+  # 1. Build category-specific subsets
+  # --------------------------------------------------------------------------
+  if (is.null(include_shared_hits)) {
     
-    perform_pathway_analysis(
+    # original behaviour
+    split_dfs <- split(df, df[[category_col]])
+    
+  } else {
+    
+    include_shared_hits <- unlist(include_shared_hits, use.names = FALSE)
+    
+    if (length(include_shared_hits) < 1) {
+      stop("include_shared_hits must be NULL or contain at least one entry.")
+    }
+    
+    always_include_category <- include_shared_hits[1]
+    search_terms <- include_shared_hits[-1]
+    
+    if (!(always_include_category %in% df[[category_col]])) {
+      stop(
+        paste0(
+          "The first entry of include_shared_hits ('",
+          always_include_category,
+          "') was not found in df[['", category_col, "']]."
+        )
+      )
+    }
+    
+    if (!("sgRNA" %in% colnames(df))) {
+      stop("The dataframe must contain an 'sgRNA' column when include_shared_hits is used.")
+    }
+    
+    base_split <- split(df, df[[category_col]])
+    always_include_df <- df[df[[category_col]] == always_include_category, , drop = FALSE]
+    
+    split_dfs <- lapply(names(base_split), function(cat) {
+      current_df <- base_split[[cat]]
+      dfs_to_combine <- list(current_df, always_include_df)
+      
+      if (length(search_terms) > 0) {
+        matched_terms <- search_terms[vapply(
+          search_terms,
+          function(term) grepl(term, cat, fixed = TRUE),
+          logical(1)
+        )]
+        
+        if (length(matched_terms) == 1) {
+          matched_col <- matched_terms[1]
+          
+          if (!(matched_col %in% colnames(df))) {
+            stop(
+              paste0(
+                "Category '", cat, "' matched term '", matched_col,
+                "', but no dataframe column named '", matched_col, "' exists."
+              )
+            )
+          }
+          
+          extra_df <- df[is_true_like(df[[matched_col]]), , drop = FALSE]
+          dfs_to_combine <- c(dfs_to_combine, list(extra_df))
+        }
+      }
+      
+      combined_df <- dplyr::bind_rows(dfs_to_combine)
+      combined_df <- dplyr::distinct(combined_df, sgRNA, .keep_all = TRUE)
+      combined_df
+    })
+    
+    names(split_dfs) <- names(base_split)
+  }
+  
+  # --------------------------------------------------------------------------
+  # 2. Optional secondary split by positive / negative significanceZ
+  # --------------------------------------------------------------------------
+  if (isTRUE(split_pos_neg)) {
+    
+    if (!("significanceZ" %in% colnames(df))) {
+      stop("split_pos_neg = TRUE requires a 'significanceZ' column in df. run calculate_category_based_Z_score() for the dataframe first.")
+    }
+    
+    split_dfs_pos_neg <- list()
+    
+    for (cat in names(split_dfs)) {
+      current_df <- split_dfs[[cat]]
+      
+      pos_df <- current_df[!is.na(current_df$significanceZ) & current_df$significanceZ > 0, , drop = FALSE]
+      neg_df <- current_df[!is.na(current_df$significanceZ) & current_df$significanceZ < 0, , drop = FALSE]
+      
+      if (nrow(pos_df) > 0) {
+        split_dfs_pos_neg[[paste0(cat, "_positive")]] <- pos_df
+      }
+      if (nrow(neg_df) > 0) {
+        split_dfs_pos_neg[[paste0(cat, "_negative")]] <- neg_df
+      }
+    }
+    
+    split_dfs <- split_dfs_pos_neg
+  }
+  
+  # --------------------------------------------------------------------------
+  # 3. Run pathway analysis for each subset OR load prior results
+  # --------------------------------------------------------------------------
+  if (isTRUE(use_prior_results)) {
+    
+    if (is.null(image_save_folder)) {
+      stop("use_prior_results = TRUE requires image_save_folder to be set.")
+    }
+    
+    analysis_input_dfs <- list()
+    results <- list()
+    
+    split_names <- c(names(split_dfs), "All_Hits")
+    
+    for (res_name in split_names) {
+      safe_name <- gsub("[^A-Za-z0-9_-]", "_", paste(go_enrichment, res_name, sep = "_"))
+      
+      hits_file <- file.path(image_save_folder, paste0(safe_name, "_hits.rds"))
+      results_file <- file.path(image_save_folder, paste0(safe_name, "_go_results.rds"))
+      
+      if (!file.exists(hits_file)) {
+        stop("use_prior_results = TRUE, but hits file does not exist: ", hits_file)
+      }
+      if (!file.exists(results_file)) {
+        stop("use_prior_results = TRUE, but GO results file does not exist: ", results_file)
+      }
+      
+      message("Loading prior pathway analysis for category: ", res_name)
+      
+      analysis_input_dfs[[res_name]] <- readRDS(hits_file)
+      results[[res_name]] <- readRDS(results_file)
+    }
+    
+  } else {
+    
+    analysis_input_dfs <- split_dfs
+    
+    # run pathway analysis for each subset
+    results <- lapply(names(split_dfs), function(cat) {
+      message("Running pathway analysis for category: ", cat)
+      
+      perform_pathway_analysis(
+        file_info_suffix = file_info_suffix,
+        FDR_threshold = FDR_threshold,
+        go_enrichment = go_enrichment,
+        method = method,
+        consensus = consensus,
+        enrichGO_consensus_df = split_dfs[[cat]],
+        go_terms_qvalueCutoff = go_terms_qvalueCutoff
+      )
+    })
+    
+    names(results) <- names(split_dfs)
+    
+    # add pathway analysis for all hits combined
+    message("Running pathway analysis for category: All_Hits")
+    results[["All_Hits"]] <- perform_pathway_analysis(
       file_info_suffix = file_info_suffix,
       FDR_threshold = FDR_threshold,
       go_enrichment = go_enrichment,
       method = method,
       consensus = consensus,
-      enrichGO_consensus_df = split_dfs[[cat]],
+      enrichGO_consensus_df = df,
       go_terms_qvalueCutoff = go_terms_qvalueCutoff
     )
-  })
+    
+    analysis_input_dfs[["All_Hits"]] <- df
+    
+    # ------------------------------------------------------------------------
+    # 4b. Optional saving of split hit tables and GO results as .rds
+    # ------------------------------------------------------------------------
+    if (!is.null(image_save_folder)) {
+      dir.create(image_save_folder, recursive = TRUE, showWarnings = FALSE)
+      
+      for (res_name in names(results)) {
+        safe_name <- gsub("[^A-Za-z0-9_-]", "_", paste(go_enrichment, res_name, sep = "_"))
+        
+        saveRDS(
+          analysis_input_dfs[[res_name]],
+          file = file.path(image_save_folder, paste0(safe_name, "_hits.rds"))
+        )
+        
+        saveRDS(
+          results[[res_name]],
+          file = file.path(image_save_folder, paste0(safe_name, "_go_results.rds"))
+        )
+      }
+    }
+  }
+  # --------------------------------------------------------------------------
+  # 5. Optional plotting of enrichment results
+  # --------------------------------------------------------------------------
+  if (isTRUE(plot_enrichment)) {
+    
+    if (!("GO_terms" %in% colnames(df))) {
+      stop("plot_enrichment = TRUE requires a 'GO_terms' column in df.")
+    }
+
+    # use the exact hit tables used/generated or loaded above
+    plot_input_dfs <- analysis_input_dfs
+    
+    plots <- list()
+    
+    for (res_name in names(results)) {
+      message("Plotting enrichment for: ", res_name)
+      
+      res_obj <- results[[res_name]]
+      current_df <- plot_input_dfs[[res_name]]
+      
+      if (is.null(current_df) || nrow(current_df) == 0 || is.null(res_obj)) {
+        next
+      }
+      
+      res_df <- tryCatch(as.data.frame(res_obj), error = function(e) NULL)
+      
+      if (is.null(res_df) || nrow(res_df) == 0) {
+        next
+      }
+      
+      if (!all(c("ID", "p.adjust", "Description") %in% colnames(res_df))) {
+        warning("Skipping plot for ", res_name, " because result does not contain 'ID', 'Decription', and 'p.adjust'.")
+        next
+      }
+      
+      if (!("GeneRatio" %in% colnames(res_df))) {
+        stop("Plotting requires a 'GeneRatio' column in the enrichment result.")
+      }
+      
+      max_terms_to_plot <- 40
+      
+      plot_df <- res_df %>%
+        dplyr::distinct(ID, .keep_all = TRUE) %>%
+        dplyr::mutate(
+          GeneRatio_num = as.numeric(sub("/.*", "", GeneRatio)),
+          GeneRatio_den = as.numeric(sub(".*/", "", GeneRatio)),
+          GeneRatio = GeneRatio_num / GeneRatio_den
+        ) %>%
+        dplyr::filter(!is.na(GeneRatio), GeneRatio > 0) %>%
+        dplyr::arrange(dplyr::desc(GeneRatio)) %>%
+        dplyr::slice_head(n = max_terms_to_plot) %>%
+        dplyr::mutate(
+          Description = factor(Description, levels = rev(Description))
+        )
+      
+      if (nrow(plot_df) == 0) {
+        next
+      }
+      if (is.null(include_shared_hits)) {
+        shared_hits_title <- ""
+      } else {
+        shared_hits_title <- "shared hits included"
+      }
+      
+      p <- ggplot2::ggplot(
+        plot_df,
+        ggplot2::aes(x = GeneRatio, y = Description, size = Count, colour = p.adjust)
+      ) +
+        ggplot2::geom_point(alpha = 0.9) +
+        ggplot2::labs(
+          title = paste(go_enrichment, res_name, shared_hits_title,sep = " - "),
+          x = "GeneRatio",
+          y = NULL,
+          colour = "p.adjust",
+          size = "Count"
+        ) +
+        ggplot2::scale_colour_gradient(low = "#D95F5F", high = "#2C7FB8") +
+        ggplot2::theme_bw() +
+        ggplot2::theme(
+          plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+          axis.text.y = ggplot2::element_text(size = 9)
+        )
+      
+      plots[[res_name]] <- p
+      print(p)
+      
+      if (!is.null(image_save_folder)) {
+        safe_name <- gsub("[^A-Za-z0-9_-]", "_", paste(go_enrichment, res_name, sep = "_"))
+        
+        ggplot2::ggsave(
+          filename = file.path(image_save_folder, paste0(safe_name, ".png")),
+          plot = p,
+          width = 8,
+          height = max(4.5, 0.35 * nrow(plot_df) + 2),
+          dpi = 300,
+          limitsize = FALSE
+        )
+      }
+    }
+  }
   
-  # add pathway analysis for all hits combined
-  message("Running pathway analysis for category: All_Hits")
-  results[["All_Hits"]] <- perform_pathway_analysis(
-    file_info_suffix = file_info_suffix,
-    FDR_threshold = FDR_threshold,
-    go_enrichment = go_enrichment,
-    method = method,
-    consensus = consensus,
-    enrichGO_consensus_df = df,
-    go_terms_qvalueCutoff = go_terms_qvalueCutoff
-  )
-  
-  names(results) <- names(split_dfs)
   return(results)
 }
-
+run_all_pathway_combinations <- function(
+    df,
+    dual_rep_dir,
+    file_info_suffix,
+    shared_hits = c("shared_all_three", "DCA", "PA", "GalNAc"),
+    go_enrichment_values = c("ALL","CC", "BP", "MF"),
+    split_pos_neg_values = c(TRUE, FALSE),
+    include_shared_hits_values = c(TRUE, FALSE),
+    plot_enrichment = TRUE,
+    method = "enrichGO",
+    use_prior_results = FALSE,
+    ...) {
+  
+  all_results <- list()
+  
+  for (go_term in go_enrichment_values) {
+    for (split_flag in split_pos_neg_values) {
+      for (shared_flag in include_shared_hits_values) {
+        
+        split_label <- if (split_flag) "pos_neg_split" else "no_pos_neg_split"
+        shared_label <- if (shared_flag) "shared_included" else "no_shared"
+        
+        run_name <- paste(go_term, split_label, shared_label, sep = "__")
+        image_save_folder <- file.path(
+          dual_rep_dir,
+          "GO_enrichment_plots",
+          paste(go_term, split_label, shared_label, sep = "-")
+        )
+        
+        message("Running: ", run_name)
+        
+        args <- list(
+          df = df,
+          split_pos_neg = split_flag,
+          plot_enrichment = plot_enrichment,
+          image_save_folder = image_save_folder,
+          go_enrichment = go_term,
+          file_info_suffix = file_info_suffix,
+          method = method,
+          use_prior_results = use_prior_results,
+          ...
+        )
+        
+        # only include this argument when requested
+        if (shared_flag) {
+          args$include_shared_hits <- shared_hits
+        }
+        
+        all_results[[run_name]] <- do.call(run_pathway_by_category, args)
+      }
+    }
+  }
+  
+  return(all_results)
+}
 assign_broad_classes_and_go <- function(df,
                                          output_col = "broad_class",
                                          rules = NULL,

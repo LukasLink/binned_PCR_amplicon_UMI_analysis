@@ -16,7 +16,7 @@ user_opts <- list(
 
   # Directories
   # Mandatory output_folder
-  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA",
+  output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC",
   # optional folders for results from johns bcwithqc
   john_rf_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt",
   john_folder    = "",
@@ -688,18 +688,22 @@ plot_significance_by_rank(Hits_current_settings,
                           box_padding = 0.6,
                           no_text = TRUE)
 
+source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
 p <- plot_significance_by_rank(Hits_current_settings,
                           mark_special = c("AGO2","EGFP"),
                           mark_cntrl = FALSE,
                           mark_all_signif_level = 0.05,
                           signif_lines = TRUE,
                           box_padding = 0.6,
-                          break_in_plot = c(25,70),
+                          break_in_plot = c(22,70),
                           top_padding = 3,
                           custom_title = "Significance Z-score by gene rank for GalNAc-siRNA")
-print(p)
-ggsave("/g/steinmetz/link/sharing/nico/poster_plots/Waterfall_GalNAc.pdf", p)
-#source(file.path(project_root_dir, "functions", "zzz_source_all.R"))
+# print(p) #Comment out the print command for non squished saving. 
+ggsave(
+  "/g/steinmetz/link/sharing/nico/poster_plots/Waterfall_GalNAc.pdf",
+  p
+)
+
 
 # Just highlight controls
 plot_significance_by_rank(Hits_current_settings, mark_cntrl = TRUE)
@@ -780,36 +784,49 @@ saveRDS(counts_df, rds_count_file_path)
 
 ```
 
-``` {r read_count_export, eval=FALSE}
-ola_df <- bind_rows(
-  ola_df,
-  maude_guide_stats %>%
-    filter(str_detect(sgRNA, fixed("HDCRISPR_A_ENSG00000118873")) | #rab
-          str_detect(sgRNA, fixed("HDCRISPR_A_ENSG00000164414")) |
-            str_detect(sgRNA, fixed("HDCRISPR_B_ENSG00000164414"))) %>% #slca1
-    mutate(screen = "PA")
-) %>%
-  distinct()   # removes any duplicate rows, just in case
+This block is for getting ola her ranking between guides, 
+Just run 
+``` {r ola_df, eval=FALSE}
+############# Run this block once for PA, DCA, and GALNAC each #################
+################################################################################
+new_rows <- maude_guide_stats %>%
+  filter(
+    str_detect(sgRNA, fixed("HDCRISPR_A_ENSG00000118873")) | # rab
+    str_detect(sgRNA, fixed("HDCRISPR_A_ENSG00000119888")) | # EPCAM
+    str_detect(sgRNA, fixed("HDCRISPR_B_ENSG00000119888")) | # EPCAM
+    str_detect(sgRNA, fixed("HDCRISPR_A_ENSG00000164414")) | # slca1
+    str_detect(sgRNA, fixed("HDCRISPR_B_ENSG00000164414"))   # slca1
+  ) %>%
+  mutate(
+    screen = sub(".*_([^_]+)$", "\\1", basename(output_folder))
+  )
+
+if (exists("ola_df")) {
+  ola_df <- bind_rows(ola_df, new_rows) %>% distinct()
+} else {
+  ola_df <- new_rows %>% distinct()
+}
+############# Run this block only after ola_df has been built completly ########
+################################################################################
+
+ola_df <- ola_df %>% 
+  left_join(
+    merged_sgRNA_df %>% select(sgrna_id, seq, Gene, count) %>% 
+      rename(gene = Gene,
+             library_count = count),
+    by = c("sgRNA" = "sgrna_id")
+  )
 
 ranked_df <- ola_df %>%
   group_by(gene, sgRNA) %>%
   summarise(mean_Z = mean(Z, na.rm = TRUE), .groups = "drop") %>%
   group_by(gene) %>%
   mutate(
-    rank = dense_rank(desc(abs(mean_Z)))
+    rank = dense_rank(dplyr::desc(abs(mean_Z)))
   ) %>%
   ungroup() %>%
   arrange(gene, rank)
-ola_df <- ola_df %>%
-  left_join(
-    merged_sgRNA_df %>% select(sgrna_id, seq),
-    by = c("sgRNA" = "sgrna_id")
-  )
-ranked_df <- ranked_df %>%
-  left_join(
-    merged_sgRNA_df %>% select(sgrna_id, seq),
-    by = c("sgRNA" = "sgrna_id")
-  )
+
 
 saveRDS(ola_df, "/g/steinmetz/link/sharing/ola_guides_raw_df.rds")
 saveRDS(ranked_df, "/g/steinmetz/link/sharing/ola_guides_ranked_df.rds")

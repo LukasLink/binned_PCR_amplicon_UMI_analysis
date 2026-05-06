@@ -23,6 +23,7 @@ project_setup <- function(project_root_dir,
   library(stringr)
   library(AnnotationDbi)
   library(org.Hs.eg.db)
+  library(ggbreak)
 
   
   conflicts_prefer(dplyr::rename)
@@ -31,6 +32,7 @@ project_setup <- function(project_root_dir,
   conflicts_prefer(dplyr::slice)
   conflicts_prefer(dplyr::first)
   conflicts_prefer(base::setdiff)
+  conflicts_prefer(base::intersect)
   
   #===============================================================================
   option_list <- list(

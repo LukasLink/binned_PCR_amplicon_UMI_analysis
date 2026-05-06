@@ -28,7 +28,7 @@ plot_significance_by_rank <- function(Hits_df,
   
   # x range (can reuse for both boxes)
   x_min_box <- max(Hits_df$rank) - 3000
-  x_max_box <- max(Hits_df$rank) + 500
+  x_max_box <- max(Hits_df$rank) + 700
   
   # Start base plot
   # Base plot without break
@@ -38,12 +38,17 @@ plot_significance_by_rank <- function(Hits_df,
     theme_bw() +
     labs(
       x = "Gene rank",
-      y = "Significance Z-score",
+      y = "Statistical significance Z-score (MAUDE)",
       title = ifelse(
-       is.null(custom_title),
-       "Significance Z-score by gene rank",
-       custom_title
+        is.null(custom_title),
+        "Significance Z-score by gene rank",
+        custom_title
       )
+    ) + 
+    theme(
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      plot.title = element_text(size = 18, hjust = 0.5)
     )
 
 
