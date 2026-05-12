@@ -20,20 +20,32 @@ run:
 # ------------------------------------------------------------------------------
 paths:
   # Mandatory output directory for all pipeline results.
-  output_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+  # output_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/file_name_table_test"
+  output_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1/HepG2_dual_rep_PA_subsample/subsample_50"
   
   # Mandatory input directory for fastq files
-  input_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/HepG2_resequence_26_01_30"
+  # input_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/bcwithqc_test_fastqs_1"
+  input_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1/HepG2_dual_rep_PA_subsample/subsample_50/QC_filtered"
 
   # Mandatory library file, supported formats: .tsv, .csv, .xlsx, .rds (dataframe)
   # See 'library_formatting_requirements.txt' 
   library_path: "/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/library_load_test.xlsx"
+  # library_path: ""
   
   # Mandatory reference fasta file, to generate the the STAR reference index.
   # Both can be generated via the make_reference.R script
   reference_fasta_path: ""
   reference_gtf_path: ""
   
+  # Optional but recommended input_fastq_name_parser.xlsx
+  # For matching file names to pipeline specific names. 
+  # fastq_name_table_xlsx: "/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/input_fastq_name_table_template.xlsx"
+  fastq_name_table_xlsx: ""
+  # strict_file_match: true
+  #   -> Every file in fastq_name_table_xlsx needs a match in input_folder 
+  # strict_file_match: false
+  #   -> Pipeline will process only files named in fastq_name_table_xlsx and ignore the rest. 
+  strict_file_match: true 
 
 # ------------------------------------------------------------------------------
 # Read counting settings
@@ -61,8 +73,8 @@ resources:
   # Number of Threads available on the cluster/PC
   n_threads: 10
   
-   # The number of bytes available on the cluster/PC
-  max_mem_bytes: 100000000000
+   # The number of bytes available on the cluster/PC (use e notation to avoid integer overflow)
+  max_mem_bytes: 1e11 
   
   # Optional override for Genome index bases used by STAR
   genome_sa_index_n_bases: "" 
@@ -72,10 +84,12 @@ resources:
 # align_UMI_tools Options
 # ------------------------------------------------------------------------------
 align_UMI_tools:
-  # Regular expression used to extract UMIs from reads.
+  # Regular expression used to extract UMIs from reads (see UMI tools documentation).
   # Required only when UMI-based processing with align_UMI_tools read counting.
   umi_regex: ""
-  
+  # Example pattern for extracting UMIs 
+  # "^(?P<discard_1>.{0,5})(?P<umi_1>.{10})(?P<discard_2>[AGC]{2})(?P<discard_3>GTGGAAAGGACGAAACACCG){e<=1}"
+  # Discard stagger of 0-5 nt, extract 10 nt UMI, discard 3 nt spacer, discard constantRegion
   
 # ------------------------------------------------------------------------------
 # bcwithqc Options
@@ -123,7 +137,7 @@ controls:
     - "AAVS1_25"
     - "AAVS1_35"
 
-  # Optional: restrict analysis to only these controls.
+  # Optional: restrict analysis to use only specified controls.
   use_only_these_controls: []
 
   # Are all non-targeting control sgRNAs the same across all sublibraries/replicates?
