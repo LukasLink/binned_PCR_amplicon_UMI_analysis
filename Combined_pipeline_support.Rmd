@@ -73,36 +73,134 @@ rds_output_folder <- make_clean_dir(output_folder, "/rds/")
 ## Checking sequences to prepare for reference building
 Change the raw_path to the path where your fastq file is located, and then then run the read_raw block to have a look at your reads. This will also tell you the most common read length, which will be used for calculating SJDB_OVERHANG.
 ```{r read_raw, eval=FALSE}
-raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/Liangfu_iBeer_2/David_January/QC_filtered/I_L1_FRESHR1.fastq.gz"
+raw_path = "/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1/HepG2_dual_rep_PA_subsample/subsample_10/QC_filtered/bcwithqc_test/U_L1_1.fastq.gz"
 # raw_path = "/g/steinmetz/STOCKS/Data/Assay/sequencing/2025/2025-12-21-222F7TMNX/222F7TMNX_LX_iBeer_round2_25s001568-1-1_Kaiser_lane1HCSSubset5CR12ndpositive_sequence.txt.gz"
 
-fastq_reader <- FastqStreamer(raw_path, n = 1000000)
-fastq_data <- yield(fastq_reader)
-close(fastq_reader)
+check_raw_reads <- function(
+    fastq_fpath,
+    load_first_n = 10000,
+    show_start = 1000,
+    show_5_blocks = 1
+) {
+  if (!file.exists(fastq_fpath)) {
+    stop("File not found: ", fastq_fpath)
+  }
 
-# Extract sequences
-sequences <- sread(fastq_data)
-for (i in seq(9900, 9950, by = 5)) {
-  print(sequences[i:(i+4)])
+  cat("Processing file: ", fastq_fpath, "\n")
+
+  fastq_reader <- FastqStreamer(fastq_fpath, n = load_first_n)
+  fastq_data <- yield(fastq_reader)
+  close(fastq_reader)
+
+  # Extract sequences
+  sequences <- sread(fastq_data)
+
+  # Show example reads
+  for (i in seq(show_start, show_start + 5 * (show_5_blocks-1), by = 5)) {
+    print(sequences[i:(i + 4)])
+  }
+
+  # Frequency matrix
+  freq_matrix <- consensusMatrix(sequences, as.prob = TRUE)
+
+  # Keep only A, C, G, T, N rows
+  freq_matrix <- freq_matrix[c("A", "C", "G", "T", "N"), , drop = FALSE]
+
+  # Round to 3 decimals
+  freq_matrix <- round(freq_matrix, 3)
+
+  # Get sequence lengths
+  seq_lengths <- width(sequences)
+
+  # Count occurrences of each unique length
+  length_counts <- table(seq_lengths)
+
+  # Most common read length
+  most_common_read_length <- as.integer(names(which.max(length_counts)))
+
+  # STAR parameter
+  SJDB_OVERHANG <- most_common_read_length - 1
+
+  print("-----------------------------------")
+  print("Use the most common read length - 1 for SJDB_OVERHANG")
+  print(length_counts)
+  print(paste("Most common read length:", most_common_read_length))
+  print(paste("SJDB_OVERHANG:", SJDB_OVERHANG))
+  print("-----------------------------------")
+
+  return(SJDB_OVERHANG)
 }
-freq_matrix <- consensusMatrix(sequences, as.prob = TRUE)
-# Keep only A, C, G, T, N rows
-freq_matrix <- freq_matrix[c("A", "C", "G", "T", "N"), , drop = FALSE]
+check_raw_reads_dir <- function(
+    dir_path,
+    recursive = FALSE,
+    load_first_n = 10000,
+    show_start = 1000,
+    show_5_blocks = 1
+) {
+  if (!dir.exists(dir_path)) {
+    stop("Directory not found: ", dir_path)
+  }
 
-# Convert to numeric, round to 3 decimal places, and prevent scientific notation
-freq_matrix <- round(freq_matrix, 3)
-options(scipen = 999)  # Prevent scientific notation
-# Get sequence lengths
-seq_lengths <- width(sread(fastq_data))
+  # Match:
+  # .txt, .fastq, .fq
+  # plus gzipped versions: .txt.gz, .fastq.gz, .fq.gz
+  pattern <- "\\.(txt|fastq|fq)(\\.gz)?$"
 
-# Count occurrences of each unique length
-length_counts <- table(seq_lengths)
+  fastq_files <- list.files(
+    path = dir_path,
+    pattern = pattern,
+    full.names = TRUE,
+    recursive = recursive,
+    ignore.case = TRUE
+  )
 
-# Print the results
-print("-----------------------------------")
-print("Use the most common read length -1 for SJDB_OVERHANG")
-print(length_counts)
-print("-----------------------------------")
+  if (length(fastq_files) == 0) {
+    warning("No matching files found in: ", dir_path)
+    return(data.frame(
+      file_path = character(),
+      SJDB_OVERHANG = integer()
+    ))
+  }
+
+  results <- lapply(fastq_files, function(fpath) {
+    sjdb <- tryCatch(
+      {
+        check_raw_reads(
+          fastq_fpath = fpath,
+          load_first_n = load_first_n,
+          show_start = show_start,
+          show_5_blocks = show_5_blocks
+        )
+      },
+      error = function(e) {
+        warning("Failed for file: ", fpath, "\nReason: ", conditionMessage(e))
+        NA_integer_
+      }
+    )
+
+    data.frame(
+      file_path = fpath,
+      SJDB_OVERHANG = sjdb,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  results_df <- do.call(rbind, results)
+
+  return(results_df)
+}
+check_raw_reads(raw_path, show_start = 50)
+check_raw_reads(raw_path, show_start = 800)
+check_raw_reads(raw_path, show_start = 700)
+check_raw_reads(raw_path, show_start = 4560)
+check_raw_reads(raw_path, show_start = 5000)
+check_raw_reads(raw_path, show_start = 8000)
+sjdb_table <- check_raw_reads_dir(
+  dir_path = "/g/steinmetz/link/Amplicon_barcode_analysis/PA_subsampeling/1/HepG2_dual_rep_PA_subsample/subsample_10/QC_filtered",
+  recursive = FALSE
+)
+
+#sjdb_table
 ```
 ## Loading
 If you are using the HD whole genome sgRNA library, in the load_tables block, simply specify which sub-libraries (if any) you wish to exclude in remove_these_sublibraries, and then run the block. 
