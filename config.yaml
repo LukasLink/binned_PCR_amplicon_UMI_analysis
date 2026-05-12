@@ -1,0 +1,211 @@
+# ==============================================================================
+# Amplicon Barcode Analysis Pipeline Configuration
+# ==============================================================================
+# This file contains user-configurable options for the pipeline.
+# Values here can later be overridden via CLI arguments if desired.
+# ==============================================================================
+
+
+# ------------------------------------------------------------------------------
+# Run behavior
+# ------------------------------------------------------------------------------
+run:
+  # If true, all results will be recomputed and saved.
+  # If false, the pipeline will try to load existing results where possible.
+  first_time: false
+
+
+# ------------------------------------------------------------------------------
+# Input and output paths
+# ------------------------------------------------------------------------------
+paths:
+  # Mandatory output directory for all pipeline results.
+  output_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC"
+  
+  # Mandatory input directory for fastq files
+  input_folder: "/g/steinmetz/link/Amplicon_barcode_analysis/RAW/HepG2_resequence_26_01_30"
+
+  # Mandatory library file, supported formats: .tsv, .csv, .xlsx, .rds (dataframe)
+  # See 'library_formatting_requirements.txt' 
+  library_path: "/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/library_load_test.xlsx"
+  
+  # Mandatory reference fasta file, to generate the the STAR reference index.
+  # Both can be generated via the make_reference.R script
+  reference_fasta_path: ""
+  reference_gtf_path: ""
+  
+
+# ------------------------------------------------------------------------------
+# Read counting settings
+# ------------------------------------------------------------------------------
+counting:
+  # Method used to count reads or UMIs.
+  # Allowed values:
+  #   - "bcwithqc" (This will use bcwithqc to count reads and UMIs)  #         
+  #   - "align_UMI_tools" (This will use simple STAR alignment to count reads,
+  #                        and UMI-tools to identify UMIs (requires regex expression)
+  #                       )
+  read_counting: "align_UMI_tools"
+
+  # Type of count data used downstream.
+  # Allowed values:
+  #   - "reads"
+  #   - "umis"
+  data_type: "reads"
+  
+  
+# ------------------------------------------------------------------------------
+# Read counting settings
+# ------------------------------------------------------------------------------
+resources:  
+  # Number of Threads available on the cluster/PC
+  n_threads: 10
+  
+   # The number of bytes available on the cluster/PC
+  max_mem_bytes: 100000000000
+  
+  # Optional override for Genome index bases used by STAR
+  genome_sa_index_n_bases: "" 
+  
+
+# ------------------------------------------------------------------------------
+# align_UMI_tools Options
+# ------------------------------------------------------------------------------
+align_UMI_tools:
+  # Regular expression used to extract UMIs from reads.
+  # Required only when UMI-based processing with align_UMI_tools read counting.
+  umi_regex: ""
+  
+  
+# ------------------------------------------------------------------------------
+# bcwithqc Options
+# ------------------------------------------------------------------------------
+bcwithqc:
+  # Path to a bcwithqc config.json file.
+  # Required only when using bcwithqc for read counting.
+  bcwithqc_config_path: ""
+  
+  # Optional directory containing pre-existing results from a bcwithqc count run.
+  # Leave empty if bcwithqc results should not be reused.
+  bcwithqc_dir: ""
+
+
+# ------------------------------------------------------------------------------
+# Files, sublibraries, or samples to exclude
+# ------------------------------------------------------------------------------
+skip:
+  # Individual files to skip.
+  # Example: ["I_L3_5", "U_L1_2"]
+  files: []
+
+  # Entire sublibraries to skip.
+  # Example: ["L4", "L5"]
+  sublibraries: []
+
+  # Entire sample numbers to skip.
+  # Example: ["1", "24"]
+  samples: []
+
+
+# ------------------------------------------------------------------------------
+# Controls and target lists
+# ------------------------------------------------------------------------------
+controls:
+  # Extra targets or controls that should be included in the analysis.
+  # any gene that matches an entry in include_controls will be treated as 
+  # targeting, even if it is a control. 
+  include_controls:
+    - "EGFP"
+    - "AAVS1_9"
+    - "AAVS1_13"
+    - "AAVS1_18"
+    - "AAVS1_19"
+    - "AAVS1_25"
+    - "AAVS1_35"
+
+  # Optional: restrict analysis to only these controls.
+  use_only_these_controls: []
+
+  # Are all non-targeting control sgRNAs the same across all sublibraries/replicates?
+  same_controls_in_all_sublibraries: true
+
+  # If true, keep 10% of control sgRNAs.
+  # To check the distribution of control sgRNAs after MAUDE runs. 
+  # This introduces randomness and should usually be false for final analyses.
+  subsample_controls: false
+
+
+# ------------------------------------------------------------------------------
+# Replicate and grouping behavior
+# ------------------------------------------------------------------------------
+replicates:
+  # Defines what should be treated as replicates in the experiment.
+  # Allowed values:
+  #   - ""             : no replicate grouping
+  #   - "rep"          : each group of bins is its own replicate
+  #   - "rep_sample"   : group by sample 
+  #   - "rep_sublib"   : group by sublibrary
+  method: ""
+
+  # Automatically combine replicates where appropriate.
+  auto_combine_replicates: false
+
+  # How to combine data for guide-level statistics.
+  # Allowed values:
+  #   - ""
+  #   - "sample"
+  #   - "sublib"
+  combine_for_guide_stats: "sample"
+
+  # How to combine data for gene-level statistics.
+  # Allowed values:
+  #   - "none"
+  #   - "all"
+  #   - "sample"
+  #   - "sublib"
+  combine_for_gene_stats: "none"
+
+
+# ------------------------------------------------------------------------------
+# Normalization and bin settings
+# ------------------------------------------------------------------------------
+normalization:
+  # Normalization method.
+  # Allowed values:
+  #   - ""
+  #   - "control_median"
+  norm_method: "control_median"
+
+  # Estimate missing input/unsorted data based on existing input/unsorted data.
+  recover_input: true
+
+  # Fraction used for the upper and lower sorted bins.
+  # Example: 0.10 means upper 10% and lower 10%.
+  upper_lower_percentage: 0.10
+
+  # Use custom bin fractions instead of upper_lower_percentage.
+  use_custom_bins: false
+
+
+# ------------------------------------------------------------------------------
+# Filtering behavior
+# ------------------------------------------------------------------------------
+filtering:
+  # Remove guides/rows with no reads or UMIs across all relevant bins.
+  drop_0s: false
+
+  # Remove guides that have a count of 0 in any bin.
+  strict_mode: false
+
+  # Minimum number of guides required per gene and replicate.
+  # Use 0 to disable this filter.
+  min_guides_per_gene: 0
+
+
+# ------------------------------------------------------------------------------
+# Output naming
+# ------------------------------------------------------------------------------
+output:
+  # Optional suffix added to output files/folders.
+  # Useful for distinguishing different parameter runs.
+  extra_suffix: ""

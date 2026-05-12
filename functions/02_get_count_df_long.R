@@ -192,7 +192,7 @@ process_folder_files <- function(folder_path,
   
   return(combined_df)
 }
-read_john_data <- function(dir_path, sgRNA_df) {
+read_bcwithqc_data <- function(dir_path, sgRNA_df) {
   # Step 1: Read barcodes.tsv.gz and get seq values
   
   barcodes_path <- file.path(dir_path, "barcodes.tsv.gz")
@@ -226,7 +226,7 @@ read_john_data <- function(dir_path, sgRNA_df) {
   
   return(joined_df)
 }
-read_john_rf_data  <- function(file_path, sgRNA_df){
+read_bcwithqc_rf_data  <- function(file_path, sgRNA_df){
   count_df <- read.table(file_path, sep = "\t", header = FALSE, col.names = c("seq", "count"))
   
   joined_df <- sgRNA_df %>%
@@ -238,7 +238,7 @@ read_john_rf_data  <- function(file_path, sgRNA_df){
   return(joined_df)
 }
 
-# Helper function for process_john_rf_data and process_john_data
+# Helper function for process_bcwithqc_rf_data and process_bcwithqc_data
 complete_sgrna_df <- function(df,
                               merged_sgRNA_df,
                               sublib,
@@ -280,7 +280,7 @@ complete_sgrna_df <- function(df,
   return(complete_df)
 }
 
-process_john_rf_data <- function(parent_dir,
+process_bcwithqc_rf_data <- function(parent_dir,
                                  merged_sgRNA_df = merged_sgRNA_df,
                                  data_type = "umis",
                                  skip_list = c("L_L4_3","U_L4_3"),
@@ -325,7 +325,7 @@ process_john_rf_data <- function(parent_dir,
     
     # Safely read data
     df <- tryCatch({
-      df <- read_john_rf_data(file, merged_sgRNA_df)
+      df <- read_bcwithqc_rf_data(file, merged_sgRNA_df)
       df <- complete_sgrna_df(df,
                               merged_sgRNA_df,
                               sublib,
@@ -364,7 +364,7 @@ process_john_rf_data <- function(parent_dir,
   return(final_df)
 }
 
-process_john_data <- function(parent_dir,
+process_bcwithqc_data <- function(parent_dir,
                               merged_sgRNA_df = merged_sgRNA_df,
                               data_type = "umis",
                               skip_list = c("L_L4_3","U_L4_3"),
@@ -421,7 +421,7 @@ process_john_data <- function(parent_dir,
     
     # Safely read data
     df <- tryCatch({
-      df <- read_john_data(matrix_dir, merged_sgRNA_df)
+      df <- read_bcwithqc_data(matrix_dir, merged_sgRNA_df)
       df <- complete_sgrna_df(df,
                               merged_sgRNA_df,
                               sublib,

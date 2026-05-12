@@ -24,6 +24,8 @@ project_setup <- function(project_root_dir,
   library(AnnotationDbi)
   library(org.Hs.eg.db)
   library(ggbreak)
+  library(yaml)
+  library(tools)
 
   
   conflicts_prefer(dplyr::rename)
@@ -41,11 +43,11 @@ project_setup <- function(project_root_dir,
     make_option(c("--output_folder"), type = "character", default = user_opts$output_folder,
                 help = "Output folder",
                 metavar = "PATH"),
-    make_option(c("--john_folder"), type = "character", default = user_opts$john_folder,
-                help = "John folder",
+    make_option(c("--bcwithqc_dir"), type = "character", default = user_opts$bcwithqc_dir,
+                help = "bcwithqc folder",
                 metavar = "PATH"),
-    make_option(c("--john_rf_folder"), type = "character", default = user_opts$john_rf_folder,
-                help = "John RF folder",
+    make_option(c("--bcwithqc_rf_folder"), type = "character", default = user_opts$bcwithqc_rf_folder,
+                help = "bcwithqc RF folder",
                 metavar = "PATH"),
     make_option(c("--skip_list"), type = "character", default = paste(user_opts$skip_list, collapse = ","),
                 help = "If any files are to be skipped list their names here (comma-separated) (default: '')",
@@ -59,8 +61,8 @@ project_setup <- function(project_root_dir,
     make_option(c("--include_controls_list"), type = "character", default = paste(user_opts$include_controls_list, collapse = ","),
                 help = "If any control guides should be treated like they are targeting list them here. \nNames without a '_' will be applied to all versions with an '_' so 'EGFP' will affect both 'EGFP_1' and 'EGFP_2'",
                 metavar = "LIST"),
-    make_option(c("--pipeline"), type = "character", default = user_opts$pipeline,
-                help = "Pipeline name (default: 'lukas')", metavar = "CHARACTER"),
+    make_option(c("--read_counting"), type = "character", default = user_opts$read_counting,
+                help = "read_counting name (default: 'align_UMI_tools')", metavar = "CHARACTER"),
     make_option(c("--data_type"), type = "character", default = user_opts$data_type,
                 help = "Data type (default: 'umis')", metavar = "CHARACTER"),
     make_option(c("--method"), type = "character", default = user_opts$method,
@@ -107,19 +109,30 @@ project_setup <- function(project_root_dir,
   opt_parser <- OptionParser(option_list = option_list)
   opt <- parse_args(opt_parser)
   
+  parse_comma_list <- function(x) {
+    if (is.null(x) || length(x) == 0 || !nzchar(x)) {
+      return(character())
+    }
+    
+    out <- unlist(strsplit(x, ",", fixed = TRUE))
+    out <- trimws(out)
+    out <- out[nzchar(out)]
+    
+    out
+  }
   #=============================================================================
   # Override the defaults with CLI values
   #=============================================================================
   first_time                        <- opt$first_time
   output_folder                     <- opt$output_folder
-  john_folder                       <- opt$john_folder
-  john_rf_folder                    <- opt$john_rf_folder
-  skip_list                         <- strsplit(opt$skip_list, ",")[[1]]
-  skip_list_sublib                  <- strsplit(opt$skip_list_sublib, ",")[[1]]
-  skip_list_sample                  <- strsplit(opt$skip_list_sample, ",")[[1]]
-  include_controls_list             <- strsplit(opt$include_controls_list, ",")[[1]]
+  bcwithqc_dir                      <- opt$bcwithqc_dir
+  bcwithqc_rf_folder                <- opt$bcwithqc_rf_folder
+  skip_list                         <- parse_comma_list(opt$skip_list)
+  skip_list_sublib                  <- parse_comma_list(opt$skip_list_sublib)
+  skip_list_sample                  <- parse_comma_list(opt$skip_list_sample)
+  include_controls_list             <- parse_comma_list(opt$include_controls_list)
   
-  pipeline                          <- opt$pipeline
+  read_counting                     <- opt$read_counting
   data_type                         <- opt$data_type
   method                            <- opt$method
   norm_method                       <- opt$norm_method
@@ -146,15 +159,15 @@ project_setup <- function(project_root_dir,
   #=============================================================================
   cat("first_time:                        ", first_time, "\n")
   cat("output_folder:                     ", output_folder, "\n")
-  cat("john_folder:                       ", john_folder, "\n")
-  cat("john_rf_folder:                    ", john_rf_folder, "\n")
+  cat("bcwithqc_dir:                      ", bcwithqc_dir, "\n")
+  cat("bcwithqc_rf_folder:                ", bcwithqc_rf_folder, "\n")
   
   cat("skip_list:                         ", paste(skip_list, collapse = ", "), "\n")
   cat("skip_list_sublib:                  ", paste(skip_list_sublib, collapse = ", "), "\n")
   cat("skip_list_sample:                  ", paste(skip_list_sample, collapse = ", "), "\n")
   cat("include_controls_list:             ", paste(include_controls_list, collapse = ", "), "\n")
   
-  cat("pipeline:                          ", pipeline, "\n")
+  cat("read_counting:                     ", read_counting, "\n")
   cat("data_type:                         ", data_type, "\n")
   cat("method:                            ", method, "\n")
   cat("norm_method:                       ", norm_method, "\n")
@@ -239,7 +252,16 @@ project_setup <- function(project_root_dir,
   # Construct the file suffix
   #=============================================================================
   if (use_old_suffix_construction){
-    fs_parts <- c(pipeline,
+    if (read_counting == "align_UMI_tools"){
+      read_counting_old_name <- "lukas"
+    } else if (read_counting == "bcwithqc"){
+      read_counting_old_name <- "john"
+    } else {
+      stop(read_counting,
+      " is not valid read_counting value. Please enter either 'align_UMI_tools'
+      or 'bcwithqc'.")
+    }
+    fs_parts <- c(read_counting_old_name,
                   data_type,
                   method,
                   norm_method,
@@ -252,7 +274,7 @@ project_setup <- function(project_root_dir,
                   skip_suffix,
                   extra_suffix)
   } else {
-    fs_parts <- c(pipeline,
+    fs_parts <- c(read_counting,
                   data_type,
                   method,
                   norm_method,
@@ -303,14 +325,14 @@ project_setup <- function(project_root_dir,
     # =========================
     first_time                        = first_time,
     output_folder                     = output_folder,
-    john_folder                       = john_folder,
-    john_rf_folder                    = john_rf_folder,
+    bcwithqc_dir                       = bcwithqc_dir,
+    bcwithqc_rf_folder                    = bcwithqc_rf_folder,
     skip_list                         = skip_list,
     skip_list_sublib                  = skip_list_sublib,
     skip_list_sample                  = skip_list_sample,
     include_controls_list             = include_controls_list,
     
-    pipeline                          = pipeline,
+    read_counting                          = read_counting,
     data_type                         = data_type,
     method                            = method,
     norm_method                       = norm_method,

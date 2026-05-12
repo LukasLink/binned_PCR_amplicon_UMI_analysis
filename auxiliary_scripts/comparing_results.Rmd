@@ -17,9 +17,9 @@ user_opts <- list(
   # Directories
   # Mandatory output_folder
   output_folder  = "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA",
-  # optional folders for results from johns bcwithqc
-  john_rf_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/john_read_filt",
-  john_folder    = "",
+  # optional folders for results from bcwithqcs bcwithqc
+  bcwithqc_rf_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/bcwithqc_read_filt",
+  bcwithqc_dir    = "",
 
   # If any files are to be skipped list their names here
   skip_list        = c(),  # individual files, example: c("I_L3_5", "U_L1_2")
@@ -32,8 +32,8 @@ user_opts <- list(
   # Only Specific controls (optional; only used if you set the IF to TRUE in your Rmd)
   # use_only_these_controls_list = use_only_these_controls_list,
 
-  # Set Options for pipeline function
-  pipeline                = "lukas",          # can be "john", "john_rf" or "lukas"
+  # Set Options for read_counting function
+  read_counting                = "align_UMI_tools",          # can be "bcwithqc", "bcwithqc_rf" or "align_UMI_tools"
   data_type               = "reads",          # can be "reads" or "umis"
   method                  = "",               # can be "rep", "rep_sample", "rep_sublib", or ""
   # Method decides what should be treated as replicates in this experiment. 
@@ -200,18 +200,18 @@ maude_example_guide_stats <- findGuideHitsAllScreens(
 )
 ```
 
-## Generate the long format read/umi counts either from my pipline or from johns
+## Generate the long format read/umi counts either from my pipline or from bcwithqcs
 Also provides information for each file about coverage and correct alignment
 
 ```{r get_count_df_long, eval=TRUE}
-process_john_data_backup <- process_john_data
+process_bcwithqc_data_backup <- process_bcwithqc_data
 pseudocount_added <- FALSE
 
 sink(get_file_path(rds_output_folder,paste0(file_info_suffix,"_coverage.txt")),
      split = TRUE) # capture output into a file
 
-if (pipeline == "john"){
-  count_df_long <- process_john_data(john_folder,
+if (read_counting == "bcwithqc"){
+  count_df_long <- process_bcwithqc_data(bcwithqc_dir,
                                      data_type = data_type,
                                      merged_sgRNA_df = merged_sgRNA_df,
                                      skip_list = skip_list)
@@ -220,7 +220,7 @@ if (pipeline == "john"){
       mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
       }
 } else {
-  if (pipeline == "lukas"){
+  if (read_counting == "align_UMI_tools"){
     if (data_type == "umis"){
       count_df_long <- process_folder_files(dedup_output_folder,
                                             skip_list = skip_list) #Add threshold df if thresholds should be applied 
@@ -236,19 +236,19 @@ if (pipeline == "john"){
     }
        
   } else {
-    if (pipeline == "john_rf"){
-      count_df_long <- process_john_rf_data(john_rf_folder,
+    if (read_counting == "bcwithqc_rf"){
+      count_df_long <- process_bcwithqc_rf_data(bcwithqc_rf_folder,
                                             data_type = data_type,
                                             merged_sgRNA_df = merged_sgRNA_df,
                                             skip_list = skip_list)
       
-      process_john_data <- process_john_rf_data
+      process_bcwithqc_data <- process_bcwithqc_rf_data
       if (extra_suffix == "rf"){
         count_df_long <- count_df_long %>% 
         mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
       }
     } else {
-      stop("Unsupported pipeline specified. Exiting. Pipline must be john, john_rf or lukas.")
+      stop("Unsupported read_counting specified. Exiting. Pipline must be bcwithqc, bcwithqc_rf or align_UMI_tools.")
     }
   }  
 }
@@ -407,14 +407,14 @@ if (combine_for_guide_stats != ""){
 }  
 ```
 ## Some exploration options for the raw reads/umi counts
-Mostly for comparing this pipeline to johns bcwithqc, ignore this. 
-```{r basic_pipeline_comparision, eval=FALSE}
-compare_john_lukas <- function(data_type,
-                               john_function = process_john_data,
+Mostly for comparing this read_counting to bcwithqcs bcwithqc, ignore this. 
+```{r basic_read_counting_comparision, eval=FALSE}
+compare_bcwithqc_align_UMI_tools <- function(data_type,
+                               bcwithqc_function = process_bcwithqc_data,
                                addage = "",
-                               john_folder = john_folder,
-                               lukas_umi_folder = dedup_output_folder,
-                               lukas_read_folder = mapped_output_folder){
+                               bcwithqc_dir = bcwithqc_dir,
+                               align_UMI_tools_umi_folder = dedup_output_folder,
+                               align_UMI_tools_read_folder = mapped_output_folder){
 
   if (!(data_type %in% c("umis","reads"))){
     print('ERROR: data_type must be "umis" or "reads"')
@@ -425,32 +425,32 @@ compare_john_lukas <- function(data_type,
     addage <- paste0("(",addage,")")
   }
   
-  john_df_long <- john_function(john_folder,sgRNA_df, data_type = data_type, merged_sgRNA_df = merged_sgRNA_df)
+  bcwithqc_df_long <- bcwithqc_function(bcwithqc_dir,sgRNA_df, data_type = data_type, merged_sgRNA_df = merged_sgRNA_df)
   if (data_type == "umis"){
-    lukas_df_long <- process_folder_files(lukas_umi_folder) #Add threshold df if thresholds should be applied
+    align_UMI_tools_df_long <- process_folder_files(align_UMI_tools_umi_folder) #Add threshold df if thresholds should be applied
     data_name <- "UMI"
   }
   if (data_type == "reads"){
-    lukas_df_long <- process_folder_files(lukas_read_folder) #Add threshold df if thresholds should be applied
+    align_UMI_tools_df_long <- process_folder_files(align_UMI_tools_read_folder) #Add threshold df if thresholds should be applied
     data_name <- "Read"
   } 
   
   # Join the data frames on sgRNA and exp
-  matched_df <- full_join(john_df_long, lukas_df_long, by = c("sgRNA", "condition","sublib","sample","group_category","exp"), suffix = c("_john", "_lukas")) %>%
+  matched_df <- full_join(bcwithqc_df_long, align_UMI_tools_df_long, by = c("sgRNA", "condition","sublib","sample","group_category","exp"), suffix = c("_bcwithqc", "_align_UMI_tools")) %>%
     mutate(
       # Replace missing counts with 0
-      count_john = ifelse(is.na(count_john), 0, count_john),
-      count_lukas = ifelse(is.na(count_lukas), 0, count_lukas),
+      count_bcwithqc = ifelse(is.na(count_bcwithqc), 0, count_bcwithqc),
+      count_align_UMI_tools = ifelse(is.na(count_align_UMI_tools), 0, count_align_UMI_tools),
       
       # Fill in missing 'other' columns from available one
       # Example: if there’s another column like 'condition' or 'replicate'
-      # replicate = coalesce(replicate_john, replicate_lukas)
+      # replicate = coalesce(replicate_bcwithqc, replicate_align_UMI_tools)
       # (Uncomment and adapt as needed!)
     )
 
   # Compute the difference in count
   matched_df <- matched_df %>%
-    mutate(diff = count_john - count_lukas)
+    mutate(diff = count_bcwithqc - count_align_UMI_tools)
   
   # Total difference
   total_diff <- sum(matched_df$diff)
@@ -471,8 +471,8 @@ compare_john_lukas <- function(data_type,
 
 
   total_df <- tibble(
-    source = c("John", "Lukas"),
-    total_count = c(sum(matched_df$count_john), sum(matched_df$count_lukas))
+    source = c("bcwithqc", "align_UMI_tools"),
+    total_count = c(sum(matched_df$count_bcwithqc), sum(matched_df$count_align_UMI_tools))
   )
   
   p <- ggplot(total_df, aes(x = source, y = total_count, fill = source)) +
@@ -488,8 +488,8 @@ compare_john_lukas <- function(data_type,
   print(p)
   
   nonzero_df <- tibble(
-    source = c("John", "Lukas", "Max"),
-    nonzero_count = c(sum(matched_df$count_john > 0), sum(matched_df$count_lukas > 0), nrow(matched_df))
+    source = c("bcwithqc", "align_UMI_tools", "Max"),
+    nonzero_count = c(sum(matched_df$count_bcwithqc > 0), sum(matched_df$count_align_UMI_tools > 0), nrow(matched_df))
   )
   
   p <- ggplot(nonzero_df, aes(x = source, y = nonzero_count, fill = source)) +
@@ -504,16 +504,16 @@ compare_john_lukas <- function(data_type,
     theme(legend.position = "none")
   print(p)
   
-  # Assuming you've matched the two runs: count_john vs count_lukas
-  p <- ggplot(matched_df, aes(x = count_john + 1, y = count_lukas + 1)) +
+  # Assuming you've matched the two runs: count_bcwithqc vs count_align_UMI_tools
+  p <- ggplot(matched_df, aes(x = count_bcwithqc + 1, y = count_align_UMI_tools + 1)) +
     geom_count(alpha = 0.7) +
     geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
     scale_size_area(max_size = 4) +  # optional: adjust max size
     scale_x_log10() + scale_y_log10() +
     labs(
       title = paste("Comparison of sgRNA", data_name, addage, "Counts"),
-      x = paste("John", data_name, addage, "Counts"),
-      y = paste("Lukas", data_name, addage, "Counts"),
+      x = paste("bcwithqc", data_name, addage, "Counts"),
+      y = paste("align_UMI_tools", data_name, addage, "Counts"),
       size = "Count overlap"
     ) +
     theme_minimal()
@@ -521,7 +521,7 @@ compare_john_lukas <- function(data_type,
   # Histogram
   p <- ggplot(matched_df, aes(x = diff)) +
     geom_histogram(bins = 50, fill = "steelblue", color = "white") +
-    labs(title = paste("Distribution of",data_name, addage, "Count Differences (John - Lukas)"),
+    labs(title = paste("Distribution of",data_name, addage, "Count Differences (bcwithqc - align_UMI_tools)"),
          x = paste(data_name, addage,"Count Difference"),
          y = "Frequency") +
     xlim(-1000, 1000) +
@@ -535,7 +535,7 @@ compare_john_lukas <- function(data_type,
     geom_density(fill = "skyblue", alpha = 0.5) +
     coord_cartesian(xlim = x_limits) +  # Zoom in without removing data
     labs(title = paste("Density of",data_name, addage, "Count Differences (95% Range)"),
-         x = "John - Lukas") +
+         x = "bcwithqc - align_UMI_tools") +
     theme_minimal()
   print(p)
   x_limits <- quantile(matched_df$diff, probs = c(0.005, 0.995), na.rm = TRUE)
@@ -545,13 +545,13 @@ compare_john_lukas <- function(data_type,
     geom_density(fill = "skyblue", alpha = 0.5) +
     coord_cartesian(xlim = x_limits) +  # Zoom in without removing data
     labs(title = paste("Density of",data_name, addage, "Count Differences (99% Range)"),
-         x = "John - Lukas") +
+         x = "bcwithqc - align_UMI_tools") +
     theme_minimal()
   print(p)
   matched_df <- matched_df %>%
     mutate(
-      average = (count_john + count_lukas) / 2,
-      diff = count_john - count_lukas
+      average = (count_bcwithqc + count_align_UMI_tools) / 2,
+      diff = count_bcwithqc - count_align_UMI_tools
     )
   
   p <- ggplot(matched_df, aes(x = average, y = diff)) +
@@ -559,19 +559,19 @@ compare_john_lukas <- function(data_type,
     geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
     labs(title = paste("Bland–Altman Plot for",data_name, addage,"Counts"),
          x = paste("Average", data_name, addage, "Count"),
-         y = "Difference (John - Lukas)") +
+         y = "Difference (bcwithqc - align_UMI_tools)") +
     theme_minimal()
   print(p)
   return(matched_df)
 }
-compare_john_lukas("reads",
-                   john_function = process_john_data_backup)
-compare_john_lukas("umis",
-                   john_function = process_john_rf_data,
-                   john_folder = john_rf_folder)
-compare_john_lukas("umis",
-                   lukas_umi_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/dedup_no_filt/",
-                   john_function = process_john_data_backup,
+compare_bcwithqc_align_UMI_tools("reads",
+                   bcwithqc_function = process_bcwithqc_data_backup)
+compare_bcwithqc_align_UMI_tools("umis",
+                   bcwithqc_function = process_bcwithqc_rf_data,
+                   bcwithqc_dir = bcwithqc_rf_folder)
+compare_bcwithqc_align_UMI_tools("umis",
+                   align_UMI_tools_umi_folder = "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/dedup_no_filt/",
+                   bcwithqc_function = process_bcwithqc_data_backup,
                    addage = "#NoFilter")
 
 # Rank each row by count within each exp and condition group
@@ -704,7 +704,7 @@ compare_versions <- function(base_name, file_path = "/home/link/NB_EXP030/MAUDE_
     readRDS(file)
   })
   
-  # Assign meaningful names to each version (e.g., "lukas_reads", "john_reads", etc.)
+  # Assign meaningful names to each version (e.g., "align_UMI_tools_reads", "bcwithqc_reads", etc.)
   names(files) <- paste0(base_name, suffixes)
   
   # Perform the comparisons (you can adjust this logic depending on your requirements)
@@ -723,7 +723,7 @@ compare_versions <- function(base_name, file_path = "/home/link/NB_EXP030/MAUDE_
 
 
 compare_versions <- function(file_path = get("rds_output_folder", envir = .GlobalEnv),
-                             base_names = c("lukas_reads", "john_reads", "lukas_umis", "john_rf_umis")) {
+                             base_names = c("align_UMI_tools_reads", "bcwithqc_reads", "align_UMI_tools_umis", "bcwithqc_rf_umis")) {
 
   # Create an empty list to store all comparisons
   comparisons <- list()
@@ -787,33 +787,33 @@ compare_versions <- function(file_path = get("rds_output_folder", envir = .Globa
     }
   }
   
-  # Comparison 2: Compare reads and umis between John and Lukas
-  # Define pairs for Lukas vs. John comparisons for "reads" and "umis"
-  john_lukas_comparisons <- list(
-    c("lukas_reads", "john_reads"),
-    c("lukas_umis", "john_rf_umis")
+  # Comparison 2: Compare reads and umis between bcwithqc and align_UMI_tools
+  # Define pairs for align_UMI_tools vs. bcwithqc comparisons for "reads" and "umis"
+  bcwithqc_align_UMI_tools_comparisons <- list(
+    c("align_UMI_tools_reads", "bcwithqc_reads"),
+    c("align_UMI_tools_umis", "bcwithqc_rf_umis")
   )
   
-  for (pair in john_lukas_comparisons) {
+  for (pair in bcwithqc_align_UMI_tools_comparisons) {
     for (suffix in suffixes) {
       cat(paste("------------------------------------------------","\n"))
-      # Construct filenames for Lukas and John based on base names and suffixes
-      lukas_file <- paste0(file_path, "_", pair[1], suffix, ".rds")
-      john_file <- paste0(file_path, "_", pair[2], suffix, ".rds")
+      # Construct filenames for align_UMI_tools and bcwithqc based on base names and suffixes
+      align_UMI_tools_file <- paste0(file_path, "_", pair[1], suffix, ".rds")
+      bcwithqc_file <- paste0(file_path, "_", pair[2], suffix, ".rds")
       
       # Check if the files exist
-      if (file.exists(lukas_file) & file.exists(john_file)) {
+      if (file.exists(align_UMI_tools_file) & file.exists(bcwithqc_file)) {
         # Read the files
-        lukas_data <- readRDS(lukas_file)
-        john_data <- readRDS(john_file)
+        align_UMI_tools_data <- readRDS(align_UMI_tools_file)
+        bcwithqc_data <- readRDS(bcwithqc_file)
         
-        # Perform the comparison between Lukas and John for each suffix combination
+        # Perform the comparison between align_UMI_tools and bcwithqc for each suffix combination
         comparison_name <- paste(pair[1], "vs", pair[2], "(", suffix, ")")
-        intersect_df <- get_top_N_intersect(lukas_data, john_data, N = 100)
+        intersect_df <- get_top_N_intersect(align_UMI_tools_data, bcwithqc_data, N = 100)
         cat(paste(comparison_name, "Number of intersects:",nrow(intersect_df),"\n"))
         comparisons[[paste(pair[1], pair[2], comparison_name)]] <- intersect_df
       } else {
-        cat(paste("One or both files not found, skipping:", lukas_file, "and", john_file, "\n"))
+        cat(paste("One or both files not found, skipping:", align_UMI_tools_file, "and", bcwithqc_file, "\n"))
       }
     }
   }
@@ -943,10 +943,10 @@ compare_Hits <- function(df1, df2, top_N = 50) {
 compare_methods <- function(N = 100) {
   # List of the four dataframes
   df_list <- list(
-    "Hits_lukas_umis" = Hits_lukas_umis,
-    "Hits_lukas_umis_RI" = Hits_lukas_umis_RI,
-    "Hits_lukas_umis_sum_RI" = Hits_lukas_umis_sum_RI,
-    "Hits_lukas_umis_rep_RI" = Hits_lukas_umis_rep_RI
+    "Hits_align_UMI_tools_umis" = Hits_align_UMI_tools_umis,
+    "Hits_align_UMI_tools_umis_RI" = Hits_align_UMI_tools_umis_RI,
+    "Hits_align_UMI_tools_umis_sum_RI" = Hits_align_UMI_tools_umis_sum_RI,
+    "Hits_align_UMI_tools_umis_rep_RI" = Hits_align_UMI_tools_umis_rep_RI
   )
   
   # Helper function to calculate AHSA1 position
@@ -1018,10 +1018,10 @@ plot_all_qq_plots(rds_output_folder)
 # Batch generate specific qq plots
 # add suffixes <- c(list_of_suffixes_without_.rds); example <- c("", "_RI")
 #===============================================================================
-generate_qq_plots("lukas_reads")
-generate_qq_plots("lukas_umis")
-generate_qq_plots("john_reads")
-generate_qq_plots("john_rf_umis")
+generate_qq_plots("align_UMI_tools_reads")
+generate_qq_plots("align_UMI_tools_umis")
+generate_qq_plots("bcwithqc_reads")
+generate_qq_plots("bcwithqc_rf_umis")
 
 #===============================================================================
 # Create Hit lists
@@ -1030,10 +1030,10 @@ generate_qq_plots("john_rf_umis")
 Hits_current_settings <- add_info_wrapper(file_info_suffix)
 plot_qq_maude(Hits_current_settings, "Sublibraries as replicates combined")
 plot_qq_maude(export_df, "Sublibraries as replicates combined")
-Hits_sublib <- add_info_wrapper("lukas_umis_rep_sublib_control_median_RI")
-Hits_lukas_umis_control_median_RI <- add_info_wrapper("lukas_umis_control_median_RI")
-Hits_lukas_umis_sum_control_median_RI <- add_info_wrapper("lukas_umis_sum_control_median_RI")
-Hits_sublib_combined <- add_info_wrapper("lukas_umis_rep_sublib_control_median_RI_0")
+Hits_sublib <- add_info_wrapper("align_UMI_tools_umis_rep_sublib_control_median_RI")
+Hits_align_UMI_tools_umis_control_median_RI <- add_info_wrapper("align_UMI_tools_umis_control_median_RI")
+Hits_align_UMI_tools_umis_sum_control_median_RI <- add_info_wrapper("align_UMI_tools_umis_sum_control_median_RI")
+Hits_sublib_combined <- add_info_wrapper("align_UMI_tools_umis_rep_sublib_control_median_RI_0")
 
 #===============================================================================
 # Intersect 2 different Hit lists
@@ -1045,52 +1045,52 @@ top_100_2 <- get_top_N_intersect(Hits_current_settings,Hits_sum, N=100)
 
 
 
-top_50_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=50)
-top_20_umis_intersect <- get_top_N_intersect(Hits_lukas_umis_RI,Hits_lukas_umis_sum_RI, N=20)
-top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_lukas_reads_sum_RI,Hits_lukas_reads_rep_RI_rf, N=50)
-top_10_umis_intersect___sum <- get_top_N_intersect(Hits_lukas_umis_sum_RI,Hits_lukas_umis_RI, N=10)
-top_15_umis_intersect_control_median <- get_top_N_intersect(Hits_lukas_umis_sum_control_median_RI,Hits_lukas_umis_control_median_RI, N=100)
+top_50_umis_intersect <- get_top_N_intersect(Hits_align_UMI_tools_umis_RI,Hits_align_UMI_tools_umis_sum_RI, N=50)
+top_20_umis_intersect <- get_top_N_intersect(Hits_align_UMI_tools_umis_RI,Hits_align_UMI_tools_umis_sum_RI, N=20)
+top_50_umis_intersect_sum_rep <- get_top_N_intersect(Hits_align_UMI_tools_reads_sum_RI,Hits_align_UMI_tools_reads_rep_RI_rf, N=50)
+top_10_umis_intersect___sum <- get_top_N_intersect(Hits_align_UMI_tools_umis_sum_RI,Hits_align_UMI_tools_umis_RI, N=10)
+top_15_umis_intersect_control_median <- get_top_N_intersect(Hits_align_UMI_tools_umis_sum_control_median_RI,Hits_align_UMI_tools_umis_control_median_RI, N=100)
 top_10_umis_intersect_both <- get_top_N_intersect(top_15_umis_intersect_control_median,top_10_umis_intersect___sum, N=10)
-top_10_umis_sum_control_median <- get_top_N_intersect(Hits_lukas_umis_sum_control_median_RI,Hits_lukas_umis_sum_control_median_RI, N=10)
-saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=100), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_100.rds")
-saveRDS(get_top_N(Hits_lukas_umis_sum_RI, N=50), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_50.rds")
-saveRDS(get_top_N(Hits_lukas_umis_sum_RI,N=20), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_20.rds")
+top_10_umis_sum_control_median <- get_top_N_intersect(Hits_align_UMI_tools_umis_sum_control_median_RI,Hits_align_UMI_tools_umis_sum_control_median_RI, N=10)
+saveRDS(get_top_N(Hits_align_UMI_tools_umis_sum_RI, N=100), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_100.rds")
+saveRDS(get_top_N(Hits_align_UMI_tools_umis_sum_RI, N=50), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_50.rds")
+saveRDS(get_top_N(Hits_align_UMI_tools_umis_sum_RI,N=20), "/g/steinmetz/link/Amplicon_barcode_analysis/NB_EXP030/heatmaps/top_20.rds")
 #===============================================================================
 # Make individual qq-plots for the p-values of the hits. 
 #===============================================================================
-plot_qq_maude(Hits_lukas_umis_RI, "UMIs (one replicate method)")
-plot_qq_maude(Hits_lukas_umis_sum_RI, "UMIs (sum method)")
-plot_qq_maude(Hits_lukas_reads_RI, "reads (one replicate method)")
-plot_qq_maude(Hits_lukas_reads_sum_RI, "reads (sum method)")
+plot_qq_maude(Hits_align_UMI_tools_umis_RI, "UMIs (one replicate method)")
+plot_qq_maude(Hits_align_UMI_tools_umis_sum_RI, "UMIs (sum method)")
+plot_qq_maude(Hits_align_UMI_tools_reads_RI, "reads (one replicate method)")
+plot_qq_maude(Hits_align_UMI_tools_reads_sum_RI, "reads (sum method)")
 
-plot_qq_maude(Hits_lukas_umis_control_median_RI, "UMIs (one replicate method)(normalized)")
-plot_qq_maude(Hits_lukas_umis_sum_control_median_RI, "UMIs (sum method)(normalized)")
-plot_qq_maude(Hits_lukas_reads_control_median_RI, "reads (one replicate method)(normalized)")
-plot_qq_maude(Hits_lukas_reads_sum_control_median_RI, "reads (sum method)(normalized)")
+plot_qq_maude(Hits_align_UMI_tools_umis_control_median_RI, "UMIs (one replicate method)(normalized)")
+plot_qq_maude(Hits_align_UMI_tools_umis_sum_control_median_RI, "UMIs (sum method)(normalized)")
+plot_qq_maude(Hits_align_UMI_tools_reads_control_median_RI, "reads (one replicate method)(normalized)")
+plot_qq_maude(Hits_align_UMI_tools_reads_sum_control_median_RI, "reads (sum method)(normalized)")
 
-plot_qq_maude(Hits_lukas_reads, "Reads (no IR no RF)")
-plot_qq_maude(Hits_john_reads, "John Reads (no IR no RF)")
-plot_qq_maude(Hits_lukas_umis, "UMIs (no IR)")
-plot_qq_maude(Hits_john_umis, "John UMIs (no IR no RF)")
-plot_qq_maude(Hits_john_rf_umis, "John_rf UMIs (no IR)")
+plot_qq_maude(Hits_align_UMI_tools_reads, "Reads (no IR no RF)")
+plot_qq_maude(Hits_bcwithqc_reads, "bcwithqc Reads (no IR no RF)")
+plot_qq_maude(Hits_align_UMI_tools_umis, "UMIs (no IR)")
+plot_qq_maude(Hits_bcwithqc_umis, "bcwithqc UMIs (no IR no RF)")
+plot_qq_maude(Hits_bcwithqc_rf_umis, "bcwithqc_rf UMIs (no IR)")
 
-plot_qq_maude(Hits_lukas_reads_RI, "Reads (no IR)")
-plot_qq_maude(Hits_john_reads_RI, "John Reads (no RF)")
-plot_qq_maude(Hits_lukas_reads_RI_rf, "Reads")
-# plot_qq_maude(Hits_john_reads_RI_rf, "John Reads")
+plot_qq_maude(Hits_align_UMI_tools_reads_RI, "Reads (no IR)")
+plot_qq_maude(Hits_bcwithqc_reads_RI, "bcwithqc Reads (no RF)")
+plot_qq_maude(Hits_align_UMI_tools_reads_RI_rf, "Reads")
+# plot_qq_maude(Hits_bcwithqc_reads_RI_rf, "bcwithqc Reads")
 
-plot_qq_maude(Hits_lukas_umis_RI, "UMIs")
-plot_qq_maude(Hits_john_rf_umis_RI, "John UMIs")
+plot_qq_maude(Hits_align_UMI_tools_umis_RI, "UMIs")
+plot_qq_maude(Hits_bcwithqc_rf_umis_RI, "bcwithqc UMIs")
 
-plot_qq_maude(Hits_lukas_reads_sum_RI_rf, "Reads replicate summation")
-plot_qq_maude(Hits_john_reads_sum_RI_rf, "John Reads replicate summation")
-plot_qq_maude(Hits_lukas_umis_sum_RI, "UMIs replicate summation")
-plot_qq_maude(Hits_john_rf_umis_sum_RI, "John UMIs replicate summation")
+plot_qq_maude(Hits_align_UMI_tools_reads_sum_RI_rf, "Reads replicate summation")
+plot_qq_maude(Hits_bcwithqc_reads_sum_RI_rf, "bcwithqc Reads replicate summation")
+plot_qq_maude(Hits_align_UMI_tools_umis_sum_RI, "UMIs replicate summation")
+plot_qq_maude(Hits_bcwithqc_rf_umis_sum_RI, "bcwithqc UMIs replicate summation")
 
-plot_qq_maude(Hits_lukas_reads_rep_RI_rf, "Reads multiple replicates")
-plot_qq_maude(Hits_john_reads_rep_RI_rf, "John Reads multiple replicates")
-plot_qq_maude(Hits_lukas_umis_rep_RI, "UMIs multiple replicates")
-plot_qq_maude(Hits_john_rf_umis_rep_RI, "John UMIs multiple replicates")
+plot_qq_maude(Hits_align_UMI_tools_reads_rep_RI_rf, "Reads multiple replicates")
+plot_qq_maude(Hits_bcwithqc_reads_rep_RI_rf, "bcwithqc Reads multiple replicates")
+plot_qq_maude(Hits_align_UMI_tools_umis_rep_RI, "UMIs multiple replicates")
+plot_qq_maude(Hits_bcwithqc_rf_umis_rep_RI, "bcwithqc UMIs multiple replicates")
 
 
 
@@ -1101,18 +1101,18 @@ results_methods <- compare_methods(N = 50)
 
 
 
-# maude_gene_stats_lukas <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_lukas_reads.rds"))
-# maude_gene_stats_john <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_john_reads.rds"))
+# maude_gene_stats_align_UMI_tools <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_align_UMI_tools_reads.rds"))
+# maude_gene_stats_bcwithqc <- readRDS(paste0("/home/link/NB_EXP030/MAUDE_gene_stats", "_bcwithqc_reads.rds"))
 # 
-# top_1000_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john)
-# top_100_reads_intersect <- get_top_N_intersect(maude_gene_stats_lukas,maude_gene_stats_john, N=100)
+# top_1000_reads_intersect <- get_top_N_intersect(maude_gene_stats_align_UMI_tools,maude_gene_stats_bcwithqc)
+# top_100_reads_intersect <- get_top_N_intersect(maude_gene_stats_align_UMI_tools,maude_gene_stats_bcwithqc, N=100)
 
 ```
 
 ``` {r compare_mapping_results, eval=FALSE}
-pa_mapping_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA/results/lukas_reads_control_median_RI_comb_sample_mapping_results.xlsx"
-dca_mapping_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA/results/lukas_reads_control_median_RI_comb_sample_mapping_results.xlsx"
-gal_mapping_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC/results/lukas_reads_control_median_RI_comb_sample_mapping_results.xlsx"
+pa_mapping_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_PA/results/align_UMI_tools_reads_control_median_RI_comb_sample_mapping_results.xlsx"
+dca_mapping_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA/results/align_UMI_tools_reads_control_median_RI_comb_sample_mapping_results.xlsx"
+gal_mapping_file_path <- "/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC/results/align_UMI_tools_reads_control_median_RI_comb_sample_mapping_results.xlsx"
 library(readxl)
 map_pa_df  <- read_excel(pa_mapping_file_path)
 map_dca_df <- read_excel(dca_mapping_file_path)
@@ -1648,7 +1648,7 @@ automate_subsample_comparison <- function(file_info_prefix = get("file_info_suff
     full.names = TRUE
   )
   
-  # 2) extract the combined prefix+number part (e.g. "A25" from lukas_reads_control_median_RI_subsample_A25.rds)
+  # 2) extract the combined prefix+number part (e.g. "A25" from align_UMI_tools_reads_control_median_RI_subsample_A25.rds)
   subsample_tag <- sub(
     paste0(".*", file_info_prefix, "_subsample_([A-Za-z]+[0-9]+)\\.rds$"),
     "\\1",
