@@ -6,100 +6,254 @@ read_file_to_df <- function(file_name,
                             suffix_to_rm = "_dedup_idxstats.txt",
                             threshold_df = NULL,
                             check_alignments = TRUE
-){
+) {
   
-  file_path <- file.path(folder_path,file_name)  
-  df <- read.table(file_path, header=FALSE, sep="\t", stringsAsFactors=FALSE)
-  name <- sub(suffix_to_rm,"",file_name)
-  sub_lib <- str_match(name, "^[A-Za-z]+_L(\\d+)_[^_]+")[, 2]
-  sub_lib <- paste0("ICS_",sub_lib)
-  exp <- str_replace(name, "^([^_]+_)", "")
-  if(is.null(threshold_df)){
+  file_path <- file.path(folder_path, file_name)
+  df <- read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE)
+  
+  name <- sub(suffix_to_rm, "", file_name)
+  sub_lib <- stringr::str_match(name, "^[A-Za-z]+_(L\\d+)_[^_]+")[, 2]
+  exp <- stringr::str_replace(name, "^([^_]+_)", "")
+  
+  if (is.null(threshold_df)) {
     threshold <- 0
   } else {
     threshold <- threshold_df$threshold[threshold_df$replicate == name]
   }
   
   df <- df %>% 
-    rename(sgRNA = V1, count = V3, length = V2) %>%
-    select(-V4) %>%
-    mutate(count = if_else(count <= threshold, 0, count),
-           exp = exp) %>%
-    filter(sgRNA != "*")
+    dplyr::rename(sgRNA = V1, count = V3, length = V2) %>%
+    dplyr::select(-V4) %>%
+    dplyr::mutate(
+      count = dplyr::if_else(count <= threshold, 0, count),
+      exp = exp
+    ) %>%
+    dplyr::filter(sgRNA != "*")
   
-  check_df <- merged_sgRNA_df %>% select(sgrna_id, sublib)
-  # First try: plain left_join
+  # ---------------------------------------------------------------------------
+  # Prepare library annotation table
+  # ---------------------------------------------------------------------------
+  # New expected behavior:
+  # merged_sgRNA_df should contain a `type` column with values:
+  #   - non_targeting_control
+  #   - targeting_control
+  #   - targeting
+  #
+  # Backward-compatible fallback:
+  # If `type` is missing, infer controls from sgRNA names using the old grep logic.
+  # ---------------------------------------------------------------------------
+  
+  if ("type" %in% colnames(merged_sgRNA_df)) {
+    
+    check_df <- merged_sgRNA_df %>%
+      dplyr::select(sgrna_id, sublib, type)
+    
+  } else {
+    
+    logger::log_warn(
+      paste0(
+        "`merged_sgRNA_df` does not contain a `type` column. ",
+        "Falling back to grep-based control annotation using sgRNA names. ",
+        "Please update the library file to include a `type` column with values: ",
+        "non_targeting_control, targeting_control, targeting."
+      )
+    )
+    
+    check_df <- merged_sgRNA_df %>%
+      dplyr::select(sgrna_id, sublib) %>%
+      dplyr::mutate(
+        type = dplyr::case_when(
+          grepl("^CONTROL_C_NONTARG_", sgrna_id) ~ "non_targeting_control",
+          grepl("^CONTROL_C_", sgrna_id) ~ "targeting_control",
+          TRUE ~ "targeting"
+        )
+      )
+  }
+  
+  # Optional but recommended: validate allowed type values
+  allowed_types <- c(
+    "non_targeting_control",
+    "targeting_control",
+    "targeting"
+  )
+  
+  invalid_types <- unique(check_df$type[!check_df$type %in% allowed_types])
+  
+  if (length(invalid_types) > 0) {
+    stop(
+      "`merged_sgRNA_df$type` contains invalid values:\n",
+      paste0("  - ", invalid_types, collapse = "\n"),
+      "\n\nAllowed values are:\n",
+      paste0("  - ", allowed_types, collapse = "\n"),
+      call. = FALSE
+    )
+  }
+  
+  # ---------------------------------------------------------------------------
+  # Join counts to library annotation
+  # ---------------------------------------------------------------------------
+  
   joined_df <- df %>%
-    left_join(check_df, by = c("sgRNA" = "sgrna_id"))
+    dplyr::left_join(check_df, by = c("sgRNA" = "sgrna_id"))
   
   # Check for non-unique sgRNA in the result
   if (any(duplicated(joined_df$sgRNA))) {
-    warning("Non-unique `sgRNA` after join; redoing join with 1:1 pairing by order.\n")
     
-    # Add within-id index on both sides
+    logger::log_warn(
+      "Non-unique `sgRNA` after join; redoing join with 1:1 pairing by order."
+    )
+    
     df_idx <- df %>%
-      group_by(sgRNA) %>%
-      mutate(.pair_id = row_number()) %>%
-      ungroup()
+      dplyr::group_by(sgRNA) %>%
+      dplyr::mutate(.pair_id = dplyr::row_number()) %>%
+      dplyr::ungroup()
     
     check_idx <- check_df %>%
-      group_by(sgrna_id) %>%
-      mutate(.pair_id = row_number()) %>%
-      ungroup()
+      dplyr::group_by(sgrna_id) %>%
+      dplyr::mutate(.pair_id = dplyr::row_number()) %>%
+      dplyr::ungroup()
     
-    # Redo join using sgRNA/sgrna_id + the position
     joined_df <- df_idx %>%
-      left_join(
+      dplyr::left_join(
         check_idx,
         by = c("sgRNA" = "sgrna_id", ".pair_id")
       ) %>%
-      select(-.pair_id)      # clean up helper column
+      dplyr::select(-.pair_id)
+    
     df <- joined_df
+    
   } else {
+    
     df <- joined_df
   }
   
+  # ---------------------------------------------------------------------------
+  # Alignment sanity checks
+  # ---------------------------------------------------------------------------
+  
   if (check_alignments == TRUE) {
-    cat("Checking wrong allignments for: ", name,"\n")
+    
+    logger::log_info("Checking wrong alignments for: {name}")
+    
     # Filter non-control rows with count > 0
     non_control_df <- df %>%
-      filter(!grepl("^CONTROL_", sgRNA), count > 0)
+      dplyr::filter(type == "targeting", count > 0)
     
-    # Count sum stats
-    correct_sum <- non_control_df %>% filter(sublib == sub_lib) %>% summarise(total = sum(count)) %>% pull(total)
-    wrong_sum <- non_control_df %>% filter(sublib != sub_lib) %>% summarise(total = sum(count)) %>% pull(total)
+    correct_sum <- non_control_df %>%
+      dplyr::filter(sublib == sub_lib) %>%
+      dplyr::summarise(total = sum(count), .groups = "drop") %>%
+      dplyr::pull(total)
+    
+    wrong_sum <- non_control_df %>%
+      dplyr::filter(sublib != sub_lib) %>%
+      dplyr::summarise(total = sum(count), .groups = "drop") %>%
+      dplyr::pull(total)
+    
     total_sum <- correct_sum + wrong_sum
     
-    cat("UMI/read count allignment Stats:\n")
-    cat(sprintf("  Correct (aligned to sgRNA in sublibary):     %d (%.2f%%)\n", 
-                correct_sum, 100 * correct_sum / total_sum))
-    cat(sprintf("  Wrong   (aligned to sgRNA not in sublibary): %d (%.2f%%)\n\n", 
-                wrong_sum, 100 * wrong_sum / total_sum))
+    if (total_sum == 0) {
+      logger::log_warn(
+        "In file: {name} no reads/UMIs were detected. This is bad >.<"
+      )
+    }
+    
+    if (total_sum < 1000) {
+      logger::log_warn(
+        paste0(
+          "In file: {name} less than 1000 reads/UMIs were detected. ",
+          "If you were not sequencing with low depth this is bad!"
+        )
+      )
+    }
+    
+    logger::log_info("UMI/read count alignment stats:")
+    
+    if (total_sum > 0) {
+      logger::log_info(
+        "  Correct aligned to sgRNAs in sublibrary:     {correct_sum} ({round(100 * correct_sum / total_sum, 2)}%)"
+      )
+      logger::log_info(
+        "  Wrong aligned to sgRNAs not in sublibrary:   {wrong_sum} ({round(100 * wrong_sum / total_sum, 2)}%)"
+      )
+      
+      if (!is.na(wrong_sum / total_sum) && (wrong_sum / total_sum) > 0.5) {
+        logger::log_warn(
+          paste0(
+            "More than 50% of reads aligned to sgRNAs from the wrong sublibrary. ",
+            "Check whether the sublibraries in the library file and ",
+            "fastq_name_table_xlsx have the same numbering."
+          )
+        )
+      }
+      
+    } else {
+      logger::log_info("  Correct aligned to sgRNAs in sublibrary:     0")
+      logger::log_info("  Wrong aligned to sgRNAs not in sublibrary:   0")
+    }
   }
   
-  same_controls_in_all_sublibraries <- get("same_controls_in_all_sublibraries", envir = .GlobalEnv)
-  if (same_controls_in_all_sublibraries == TRUE){
+  # ---------------------------------------------------------------------------
+  # Filter to current sublibrary
+  # ---------------------------------------------------------------------------
+  
+  same_controls_in_all_sublibraries <- get(
+    "same_controls_in_all_sublibraries",
+    envir = .GlobalEnv
+  )
+  
+  if (same_controls_in_all_sublibraries == TRUE) {
+    
     df <- df %>%
-      filter(sublib == sub_lib | grepl("^CONTROL_", sgRNA)) %>%
-      select(-sublib)
+      dplyr::filter(
+        sublib == sub_lib |
+          type %in% c("non_targeting_control", "targeting_control")
+      ) %>%
+      dplyr::select(-sublib)
+    
   } else {
+    
     df <- df %>%
-      filter(sublib == sub_lib) %>%
-      select(-sublib)
+      dplyr::filter(sublib == sub_lib) %>%
+      dplyr::select(-sublib)
+  }
+  n_non_targeting_controls <- df %>%
+    dplyr::filter(type == "non_targeting_control") %>%
+    dplyr::pull(sgRNA) %>%
+    unique() %>%
+    length()
+  
+  if (n_non_targeting_controls < 3) {
+    logger::log_warn(
+      paste0(
+        "Only ", n_non_targeting_controls,
+        " non-targeting controls detected after filtering. ",
+        "MAUDE likely requires at least 3 non-targeting controls and may break downstream."
+      )
+    )
+  } else if (n_non_targeting_controls < 50) {
+    logger::log_warn(
+      paste0(
+        "Only ", n_non_targeting_controls,
+        " non-targeting controls detected after filtering. ",
+        "This may be statistically risky for normalization/modeling."
+      )
+    )
+  }
+  if (check_alignments == TRUE) {
+    logger::log_info(
+      "sgRNA coverage: {round(sum(df$count > 0) / nrow(df) * 100, 2)}%"
+    )
+    logger::log_info("--------------------------------------------")
   }
   
-  if (check_alignments == TRUE) {
-    cat(sprintf("sgRNA coverage: %.2f%%\n", sum(df$count > 0) / nrow(df) * 100))
-    cat("--------------------------------------------\n")
-  }
+  # ---------------------------------------------------------------------------
+  # group_category now comes from library type
+  # ---------------------------------------------------------------------------
   
   df <- df %>%
-    mutate(group_category = case_when(
-      # grepl("^CONTROL_C_EGFP_", sgRNA) ~ "EGFP_control",
-      grepl("^CONTROL_C_NONTARG_", sgRNA) ~ "non_targeting_control",
-      grepl("^CONTROL_C_", sgRNA) ~ "targeting_control",
-      TRUE ~ "targeting"
-    ))
+    dplyr::mutate(group_category = type) %>%
+    dplyr::select(-type)
+  
   return(df)
 }
 
@@ -282,8 +436,8 @@ complete_sgrna_df <- function(df,
 
 process_bcwithqc_rf_data <- function(parent_dir,
                                  merged_sgRNA_df = merged_sgRNA_df,
-                                 data_type = "umis",
-                                 skip_list = c("L_L4_3","U_L4_3"),
+                                 data_type = "reads",
+                                 skip_list = c(),
                                  suffix_to_rm = "_results.tsv",
                                  check_alignments = TRUE) {
   
@@ -366,8 +520,8 @@ process_bcwithqc_rf_data <- function(parent_dir,
 
 process_bcwithqc_data <- function(parent_dir,
                               merged_sgRNA_df = merged_sgRNA_df,
-                              data_type = "umis",
-                              skip_list = c("L_L4_3","U_L4_3"),
+                              data_type = "reads",
+                              skip_list = c(),
                               check_alignments = TRUE) {
   # Get list of matching subdirectories
   subdirs <- list.dirs(parent_dir, recursive = FALSE, full.names = TRUE)

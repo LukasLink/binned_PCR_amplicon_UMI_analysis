@@ -163,14 +163,16 @@ Optional columns
 
    Requirements:
    - Missing values are allowed.
-   - Non-missing values should be strings.
+   - Non-missing values should be strings matchin the entries in fastq_name_table_xlsx.
 
-   If this column is not provided:
+
+   If this column is not included:
    - The pipeline will fill sublib with:
-       ICS_1
+       L1
 
    Description:
    This column identifies the sublibrary to which the sgRNA belongs.
+   It should 
 
 
 Notes
@@ -185,7 +187,7 @@ Notes
 
   are normalized before matching.
 - Sequence values are converted to uppercase.
-- Missing sublibrary values are filled with ICS_1.
+- Missing sublibrary values are filled with L1.
 - Missing count values are not allowed if the count column is present.
 - If the count column is absent, all rows receive count = 1.
 - Duplicated sgRNA IDs are allowed but will be made unique with a warning.
