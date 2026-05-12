@@ -1,0 +1,191 @@
+Amplicon Barcode Analysis Pipeline
+Library Formatting Requirements
+================================
+
+TL; DR:
+Library file must contain the named columns: 
+sgrna_id, sgrna_seq, entrez_id, gene_symbol, control
+
+(more info below)
+----------------
+The library file defines the sgRNA/barcode library used by the pipeline.
+
+Supported file formats
+----------------------
+
+The library file must be one of the following formats:
+
+- .tsv
+- .csv
+- .xlsx
+- .rds
+
+For .rds files, the object stored in the file must be a dataframe.
+
+Required columns
+----------------
+
+The input file must contain the following required columns.
+Alternative column names are allowed and are listed below.
+
+1. sgRNA identifier (required)
+
+   Required canonical name:
+   - sgrna_id
+
+   Alternative accepted name:
+   - sgrna
+
+   Requirements:
+   - No missing values are allowed.
+   - Values should be unique.
+   - If duplicated values are present, the pipeline will make them unique by adding suffixes.
+     For example:
+       sgRNA_A
+       sgRNA_A
+       sgRNA_A
+
+     becomes:
+       sgRNA_A
+       sgRNA_A_2
+       sgRNA_A_3
+
+   Description:
+   This column should contain a unique identifier for each sgRNA or barcode entry.
+
+2. sgRNA sequence (required)
+
+   Required canonical name:
+   - sgrna_seq
+
+   Alternative accepted names:
+   - seq
+   - sgrna_sequence
+   - sequence
+
+   Requirements:
+   - No missing values are allowed.
+   - Values must be nucleotide sequences.
+   - Allowed characters are:
+       A, C, G, T, N
+
+   Description:
+   This column should contain the sgRNA/barcode nucleotide sequence.
+
+3. Entrez gene ID (required)
+
+   Required canonical name:
+   - entrez_id
+
+   Alternative accepted name:
+   - entrez
+
+   Requirements:
+   - Missing values are allowed.
+   - Non-missing values must be integers or strings containing only numbers.
+
+   Examples of valid values:
+   - 7157
+   - "7157"
+
+   Examples of invalid values:
+   - TP53
+   - ENSG00000141510
+   - 7157.5
+
+   Description:
+   This column should contain the Entrez gene identifier where available.
+
+4. Gene symbol (required)
+
+   Required canonical name:
+   - gene_symbol
+
+   Alternative accepted names:
+   - gene
+   - symbol
+
+   Requirements:
+   - Missing values are allowed.
+   - Non-missing values should be strings.
+
+   Description:
+   This column should contain the gene symbol or target name.
+
+5. Control/type annotation (required)
+
+   Required canonical name:
+   - control
+
+   Alternative accepted name:
+   - type
+
+   Requirements:
+   - No missing values are allowed.
+   - Values must be one of:
+       targeting
+       non_targeting_control
+       targeting_control
+
+   Description:
+   This column defines whether each sgRNA targets a gene or belongs to a control category.
+
+Optional columns
+----------------
+
+6. Count (optional)
+
+   Optional canonical name:
+   - count
+
+   Requirements:
+   - If provided, no missing values are allowed.
+   - Values must be integers or strings containing only numbers.
+
+   Examples of valid values:
+   - 1
+   - 10
+   - "25"
+
+   If this column is not provided:
+   - The pipeline will fill count with 1 for all rows.
+
+   Description:
+   This column can be used to specify reference copy number in the library.
+
+7. Sublibrary (optional)
+
+   Optional canonical name:
+   - sublib
+
+   Alternative accepted name:
+   - sublibrary
+
+   Requirements:
+   - Missing values are allowed.
+   - Non-missing values should be strings.
+
+   If this column is not provided:
+   - The pipeline will fill sublib with:
+       ICS_1
+
+   Description:
+   This column identifies the sublibrary to which the sgRNA belongs.
+
+
+Notes
+-----
+
+- Column names are matched case-insensitively.
+- Spaces and dots in column names are converted to underscores before matching.
+  For example:
+    sgRNA ID
+    sgrna.id
+    sgrna_id
+
+  are normalized before matching.
+- Sequence values are converted to uppercase.
+- Missing sublibrary values are filled with ICS_1.
+- Missing count values are not allowed if the count column is present.
+- If the count column is absent, all rows receive count = 1.
+- Duplicated sgRNA IDs are allowed but will be made unique with a warning.
