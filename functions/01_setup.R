@@ -389,6 +389,7 @@ project_setup <- function(project_root_dir,
   # Keep subfolder names relative. Avoid leading slashes here.
   genome_output_folder <- make_clean_dir(output_folder, "ref")
   dedup_output_folder <- make_clean_dir(output_folder, "dedup")
+  bcwithqc_output_folder <- make_clean_dir(output_folder, "bcwithqc")
   mapped_output_folder <- make_clean_dir(output_folder, "mapped")
   rds_output_folder <- make_clean_dir(output_folder, "rds")
   results_output_folder <- make_clean_dir(output_folder, "results")
@@ -407,14 +408,10 @@ project_setup <- function(project_root_dir,
   )
   log_info("Logger initialized.")
   
-  merged_sgRNA_df_path <- get_file_path(rds_output_folder, "merged_sgRNA_df.rds")
-  merged_sgRNA_df <- NULL
-  
-  if (file.exists(merged_sgRNA_df_path)) {
-    merged_sgRNA_df <- readRDS(merged_sgRNA_df_path)
-  } else {
-    logger::log_info("merged_sgRNA_df.rds not found at: {merged_sgRNA_df_path}")
-  }
+
+  merged_sgRNA_df <- read_library_file(
+    library_path = library_path
+  )
   
   # Return everything the Rmd uses.
   return_list <- list(
@@ -475,13 +472,16 @@ project_setup <- function(project_root_dir,
     file_suffix       = file_suffix,
     file_info_suffix  = file_info_suffix,
     
-    data_dir              = data_dir,
-    genome_output_folder  = genome_output_folder,
-    dedup_output_folder   = dedup_output_folder,
-    mapped_output_folder  = mapped_output_folder,
-    rds_output_folder     = rds_output_folder,
-    results_output_folder = results_output_folder,
-    fastq_symlinks_folder = fastq_symlinks_folder,
+    data_dir               = data_dir,
+    genome_output_folder   = genome_output_folder,
+    dedup_output_folder    = dedup_output_folder,
+    bcwithqc_output_folder = bcwithqc_output_folder,
+    mapped_output_folder   = mapped_output_folder,
+    rds_output_folder      = rds_output_folder,
+    results_output_folder  = results_output_folder,
+    fastq_symlinks_folder  = fastq_symlinks_folder,
+    
+    log_file = log_file,
     
     merged_sgRNA_df = merged_sgRNA_df
   )
