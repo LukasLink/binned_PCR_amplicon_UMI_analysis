@@ -158,12 +158,9 @@ project_setup(
   params = params,
   use_old_suffix_construction = TRUE
 )
-
 # The old_suffix is here so I don't run into compatibility issues with already
 # analysed data. Should be removed in the future.
-merged_test <- read_library_file(
-  library_path = library_path
-)
+
 
 #-------------------------------------------------------------------------------
 # Optional: handle use_only_these_controls
@@ -201,8 +198,8 @@ logger::log_info("Reading in read/UMI counts...")
 process_bcwithqc_data_backup <- process_bcwithqc_data
 pseudocount_added <- FALSE
 
-sink(get_file_path(rds_output_folder,paste0(file_info_suffix,"_coverage.txt")),
-     split = TRUE) # capture output into a file
+# sink(get_file_path(rds_output_folder,paste0(file_info_suffix,"_coverage.txt")),
+#      split = TRUE) # capture output into a file
 
 if (read_counting == "bcwithqc"){
   count_df_long <- process_bcwithqc_data(bcwithqc_dir,
@@ -246,7 +243,7 @@ if (read_counting == "bcwithqc"){
     }
   }  
 }
-sink()
+# sink()
 if (extra_suffix == "cf"){
   count_df_long <- count_df_long %>%
     filter(!(group != "targeting" & count < simplified_cf_threshold))
@@ -305,12 +302,9 @@ logger::log_info("sgRNAs aligned to the wrong sublibrary were excluded from the 
 ```
 
 ```{r make_coverage_output, eval=TRUE}
+df_cov <- parse_coverage_file(log_file)
 
-df_cov <- parse_coverage_file(get_file_path(
-  rds_output_folder, paste0(file_info_suffix, "_coverage.txt")
-))
-
-mapping_results_df <- add_star_log_stats(df_cov, mapped_output_folder)
+mapping_results_df <- add_star_log_stats(df_cov)
 
 rm(df_cov)
 
