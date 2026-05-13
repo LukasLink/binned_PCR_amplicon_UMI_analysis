@@ -29,8 +29,7 @@ paths:
 
   # Mandatory library file, supported formats: .tsv, .csv, .xlsx, .rds (dataframe)
   # See 'library_formatting_requirements.txt' 
-  library_path: "/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/library_load_test.xlsx"
-  # library_path: ""
+  library_path: "/g/steinmetz/link/Amplicon_barcode_analysis/library/whole_genome_sublibs_1_to_4_merged_sgRNA_df.rds"
   
   # Mandatory reference fasta file, to generate the the STAR reference index.
   # Both can be generated via the make_reference.R script
