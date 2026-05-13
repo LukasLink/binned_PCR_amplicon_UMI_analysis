@@ -3,20 +3,22 @@
 #===============================================================================
 parse_coverage_file <- function(path) {
   lines <- readLines(path, warn = FALSE)
-  
+
   mapped_output_folder <- get("mapped_output_folder", envir = .GlobalEnv)
   rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)
   
-  # find each sample block start
-  start_idx <- grep("^Checking wrong allignments for:", lines)
+  block_start_pattern <- "Checking wrong alignments for:"
+  
+  # find each sample block start, allowing logger/date prefix
+  start_idx <- grep(block_start_pattern, lines, fixed = TRUE)
+  
   if (length(start_idx) == 0) {
-    stop("No sample blocks found. Expected lines starting with: 'Checking wrong allignments for:'")
+    stop("No sample blocks found. Expected lines containing: 'Checking wrong allignments for:'")
   }
   
-  # define block ends (right before next start, or end of file)
+  # define block ends
   end_idx <- c(start_idx[-1] - 1, length(lines))
   
-  # small safe parsers
   parse_reads <- function(line) {
     if (is.na(line) || length(line) == 0) return(NA_real_)
     as.numeric(gsub(",", "", sub(".*?:\\s*([0-9,]+)\\s*\\(.*", "\\1", line)))
@@ -29,17 +31,17 @@ parse_coverage_file <- function(path) {
   
   parse_coverage <- function(line) {
     if (is.na(line) || length(line) == 0) return(NA_real_)
-    as.numeric(sub("^sgRNA coverage:\\s*([-0-9.]+)%.*", "\\1", line))
+    as.numeric(sub(".*sgRNA coverage:\\s*([-0-9.]+)%.*", "\\1", line))
   }
   
   out <- lapply(seq_along(start_idx), function(k) {
     block <- lines[start_idx[k]:end_idx[k]]
     
-    sample_name <- sub("^Checking wrong allignments for:\\s*", "", block[1])
+    sample_name <- sub(".*Checking wrong alignments for:\\s*", "", block[1])
     
-    correct_line <- block[grep("^\\s*Correct", block)][1]
-    wrong_line   <- block[grep("^\\s*Wrong", block)][1]
-    cov_line     <- block[grep("^sgRNA coverage:", block)][1]
+    correct_line <- block[grep("Correct", block)][1]
+    wrong_line   <- block[grep("Wrong", block)][1]
+    cov_line     <- block[grep("sgRNA coverage:", block, fixed = TRUE)][1]
     
     correct_reads <- parse_reads(correct_line)
     correct_perc  <- parse_perc(correct_line)
@@ -57,17 +59,23 @@ parse_coverage_file <- function(path) {
       wrong_perc    = paste0(sprintf("%.2f", wrong_perc), "%"),
       coverage      = paste0(sprintf("%.2f", coverage), "%"),
       stringsAsFactors = FALSE
-    ) %>% mutate(
-      sample_name = sub(" ", "", sample_name)
-    )
+    ) %>%
+      mutate(
+        sample_name = sub(" ", "", sample_name)
+      )
   })
   
   do.call(rbind, out)
 }
-add_star_log_stats <- function(df, mapped_output_folder) {
+
+add_star_log_stats <- function(df) {
+  
+  read_counting <- get("read_counting", envir = .GlobalEnv)
   
   mapped_output_folder <- get("mapped_output_folder", envir = .GlobalEnv)
-  rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)  
+  rds_output_folder <- get("rds_output_folder", envir = .GlobalEnv)
+  bcwithqc_output_folder <- get("bcwithqc_output_folder", envir = .GlobalEnv)
+  
   # Map STAR log "labels" -> dataframe column names
   metrics_map <- c(
     "Number of input reads"                         = "input_reads",
@@ -94,11 +102,47 @@ add_star_log_stats <- function(df, mapped_output_folder) {
   
   # Helper: parse a single STAR Log.final.out file -> one-row data.frame
   parse_star_log_file <- function(sample_name) {
-    log_path <- get_file_path(mapped_output_folder,
-                              paste0(sample_name, "_Log.final.out"))
+    
+    if (read_counting == "align_UMI_tools") {
+      
+      log_path <- get_file_path(
+        mapped_output_folder,
+        paste0(sample_name, "_Log.final.out")
+      )
+      
+    } else if (read_counting == "bcwithqc") {
+      
+      log_path_1 <- file.path(
+        bcwithqc_output_folder,
+        sample_name,
+        "STAR_files",
+        paste0(sample_name, "_Log.final.out")
+      )
+      
+      log_path_2 <- file.path(
+        bcwithqc_output_folder,
+        sample_name,
+        "intermediary_files",
+        "STAR_files",
+        paste0(sample_name, "_Log.final.out")
+      )
+      
+      if (file.exists(log_path_1)) {
+        log_path <- log_path_1
+      } else if (file.exists(log_path_2)) {
+        log_path <- log_path_2
+      } else {
+        log_path <- log_path_1
+      }
+      
+    } else {
+      
+      warning("Unknown read_counting mode: ", read_counting)
+      log_path <- NA_character_
+    }
     
     # If file missing, return all NAs
-    if (!file.exists(log_path)) {
+    if (is.na(log_path) || !file.exists(log_path)) {
       warning("STAR log not found for sample '", sample_name, "': ", log_path)
       na_vals <- setNames(rep(NA_real_, length(metrics_map)), metrics_map)
       return(as.data.frame(as.list(na_vals)))
