@@ -155,9 +155,7 @@ read_file_to_df <- function(file_name,
       logger::log_warn(
         "In file: {name} no reads/UMIs were detected. This is bad >.<"
       )
-    }
-    
-    if (total_sum < 1000) {
+    } else if (total_sum < 1000) {
       logger::log_warn(
         paste0(
           "In file: {name} less than 1000 reads/UMIs were detected. ",
