@@ -1,5 +1,33 @@
 # R/project_setup.R
 
+# ---- global knitr / options ----
+knitr::opts_chunk$set(echo = FALSE)
+options(bitmapType = "cairo")
+
+# ---- packages ----
+library(tidyverse)
+library(Matrix)
+library(conflicted)
+library(MAUDE)
+library(ggplot2)
+library(ggrepel)
+library(writexl)
+library(stringr)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(ggbreak)
+library(yaml)
+library(tools)
+library(logger)
+
+conflicts_prefer(dplyr::rename)
+conflicts_prefer(dplyr::filter)
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::slice)
+conflicts_prefer(dplyr::first)
+conflicts_prefer(base::setdiff)
+conflicts_prefer(base::intersect)
+
 #-------------------------------------------------------------------------------
 # Small helpers
 #-------------------------------------------------------------------------------
@@ -179,33 +207,7 @@ project_setup <- function(project_root_dir,
                           use_old_suffix_construction = FALSE) {
   stopifnot(is.character(project_root_dir), length(project_root_dir) == 1)
   
-  # ---- global knitr / options ----
-  knitr::opts_chunk$set(echo = FALSE)
-  options(bitmapType = "cairo")
-  
-  # ---- packages ----
-  library(tidyverse)
-  library(Matrix)
-  library(conflicted)
-  library(MAUDE)
-  library(ggplot2)
-  library(ggrepel)
-  library(writexl)
-  library(stringr)
-  library(AnnotationDbi)
-  library(org.Hs.eg.db)
-  library(ggbreak)
-  library(yaml)
-  library(tools)
-  library(logger)
-  
-  conflicts_prefer(dplyr::rename)
-  conflicts_prefer(dplyr::filter)
-  conflicts_prefer(dplyr::select)
-  conflicts_prefer(dplyr::slice)
-  conflicts_prefer(dplyr::first)
-  conflicts_prefer(base::setdiff)
-  conflicts_prefer(base::intersect)
+
   
   # ---- accept either config object, config path, or legacy user_opts ----
   # If config_path was not supplied explicitly, allow params$config to provide it.
@@ -389,7 +391,7 @@ project_setup <- function(project_root_dir,
   # Keep subfolder names relative. Avoid leading slashes here.
   genome_output_folder <- make_clean_dir(output_folder, "ref")
   dedup_output_folder <- make_clean_dir(output_folder, "dedup")
-  bcwithqc_output_folder <- make_clean_dir(output_folder, "bcwithqc")
+  bcwithqc_output_folder <- make_clean_dir(output_folder, "bcwithqc_output")
   mapped_output_folder <- make_clean_dir(output_folder, "mapped")
   rds_output_folder <- make_clean_dir(output_folder, "rds")
   results_output_folder <- make_clean_dir(output_folder, "results")
