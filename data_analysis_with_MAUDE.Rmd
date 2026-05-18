@@ -202,9 +202,8 @@ pseudocount_added <- FALSE
 #      split = TRUE) # capture output into a file
 
 if (read_counting == "bcwithqc"){
-  count_df_long <- process_bcwithqc_data(bcwithqc_dir,
+  count_df_long <- process_bcwithqc_data(
                                      data_type = data_type,
-                                     merged_sgRNA_df = merged_sgRNA_df,
                                      skip_list = skip_list)
 } else if (read_counting == "align_UMI_tools") {
   if (data_type == "umis"){
