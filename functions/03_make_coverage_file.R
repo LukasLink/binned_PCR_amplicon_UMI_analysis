@@ -112,27 +112,34 @@ add_star_log_stats <- function(df) {
       
     } else if (read_counting == "bcwithqc") {
       
-      log_path_1 <- file.path(
-        bcwithqc_output_folder,
-        sample_name,
-        "STAR_files",
-        paste0(sample_name, "_Log.final.out")
+      candidate_paths <- c(
+        file.path(
+          bcwithqc_output_folder,
+          sample_name,
+          "logs",
+          paste0("STAR_", sample_name, "_Log.final.out")
+        ),
+        file.path(
+          bcwithqc_output_folder,
+          sample_name,
+          "STAR_files",
+          paste0(sample_name, "_Log.final.out")
+        ),
+        file.path(
+          bcwithqc_output_folder,
+          sample_name,
+          "intermediary_files",
+          "STAR_files",
+          paste0(sample_name, "_Log.final.out")
+        )
       )
       
-      log_path_2 <- file.path(
-        bcwithqc_output_folder,
-        sample_name,
-        "intermediary_files",
-        "STAR_files",
-        paste0(sample_name, "_Log.final.out")
-      )
+      existing_paths <- candidate_paths[file.exists(candidate_paths)]
       
-      if (file.exists(log_path_1)) {
-        log_path <- log_path_1
-      } else if (file.exists(log_path_2)) {
-        log_path <- log_path_2
+      if (length(existing_paths) > 0) {
+        log_path <- existing_paths[1]
       } else {
-        log_path <- log_path_1
+        log_path <- candidate_paths[1]
       }
       
     } else {
