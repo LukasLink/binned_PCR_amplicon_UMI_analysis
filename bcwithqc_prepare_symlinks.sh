@@ -4,7 +4,7 @@
 #SBATCH --mem=1g
 #SBATCH -N 1
 #SBATCH --cpus-per-task=1
-#SBATCH -t 00:02:00
+#SBATCH -t 00:01:00
 #SBATCH --qos normal
 #SBATCH -o /g/steinmetz/link/logs/log_%x_%j.out
 #SBATCH -e /g/steinmetz/link/logs/log_%x_%j.err
@@ -17,8 +17,8 @@ set -euo pipefail
 # USER OPTIONS
 ################################################################################
 
-INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC/QC_filtered"
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC_bcwithqc"
+INPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA/QC_filtered"
+OUTPUT_FOLDER="/scratch/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA_bcwithqc"
 
 FASTQ_PATTERNS=("*.fastq.gz" "*.fq.gz" "*.txt.gz" "*.fastq" "*.fq" "*.txt")
 

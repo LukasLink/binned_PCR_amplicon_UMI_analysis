@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -J BCWQC_ARRAY_GALNAC                 # chmod +x ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/bcwithqc_array_run.sh
+#SBATCH -J BCWQC_ARRAY_DCA                # chmod +x ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/bcwithqc_array_run.sh
 #SBATCH -A lsteinme                       # sbatch ~/Amplicon_barcode_analysis/Lukas_Pipeline/binned_PCR_amplicon_UMI_analysis/bcwithqc_array_run.sh
 #SBATCH --mem=40g
 #SBATCH -N 1
@@ -18,14 +18,14 @@ set -euo pipefail
 # USER OPTIONS
 ################################################################################
 
-OUTPUT_FOLDER="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC_bcwithqc"
+OUTPUT_FOLDER="/scratch/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA_bcwithqc"
 
 BCWITHQC_CONFIG="/g/steinmetz/link/Amplicon_barcode_analysis/bcwithqc_test/bcwithqc_config_stagger.json"
-STAR_INDEX="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_GALNAC/star_index/NOPE"
+STAR_INDEX="/g/steinmetz/link/Amplicon_barcode_analysis/HepG2_dual_rep_DCA/star_index/NOPE"
 BCWITHQC_BIN="/home/link/.conda/envs/py313/bin/bcwithqc"
 
 NUM_THREADS="${SLURM_CPUS_PER_TASK:-10}"
-KEEP_INTERMEDIARY=true
+KEEP_INTERMEDIARY=false
 VERBOSITY="-vv"
 
 ################################################################################
