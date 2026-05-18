@@ -206,48 +206,20 @@ if (read_counting == "bcwithqc"){
                                      data_type = data_type,
                                      merged_sgRNA_df = merged_sgRNA_df,
                                      skip_list = skip_list)
-  if (extra_suffix == "rf"){
-      count_df_long <- count_df_long %>% 
-      mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
-      }
+} else if (read_counting == "align_UMI_tools") {
+  if (data_type == "umis"){
+    count_df_long <- process_folder_files(dedup_output_folder,
+                                          skip_list = skip_list) #Add threshold df if thresholds should be applied 
+  }
+  if (data_type == "reads"){
+    count_df_long <- process_folder_files(mapped_output_folder,
+                                          skip_list = skip_list) #Add threshold df if thresholds should be applied 
+  }
 } else {
-  if (read_counting == "align_UMI_tools"){
-    if (data_type == "umis"){
-      count_df_long <- process_folder_files(dedup_output_folder,
-                                            skip_list = skip_list) #Add threshold df if thresholds should be applied 
-    }
-    if (data_type == "reads"){
-      count_df_long <- process_folder_files(mapped_output_folder,
-                                            skip_list = skip_list) #Add threshold df if thresholds should be applied 
-      if (extra_suffix == "rf"){
-        count_df_long <- count_df_long %>% 
-        mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
-      }
+  stop(read_counting, " is not a valid read_counting value. Exiting. read_counting must be 'bcwithqc' or #align_UMI_tools'.")
+}
 
-    }
-       
-  } else {
-    if (read_counting == "bcwithqc_rf"){
-      count_df_long <- process_bcwithqc_rf_data(bcwithqc_rf_folder,
-                                            data_type = data_type,
-                                            merged_sgRNA_df = merged_sgRNA_df,
-                                            skip_list = skip_list)
-      
-      process_bcwithqc_data <- process_bcwithqc_rf_data
-      if (extra_suffix == "rf"){
-        count_df_long <- count_df_long %>% 
-        mutate(count = ifelse(count < simplified_rf_threshold, 0, count))        
-      }
-    } else {
-      stop(read_counting, " is not a valid read_counting value. Exiting. read_counting must be bcwithqc, bcwithqc_rf or align_UMI_tools.")
-    }
-  }  
-}
 # sink()
-if (extra_suffix == "cf"){
-  count_df_long <- count_df_long %>%
-    filter(!(group != "targeting" & count < simplified_cf_threshold))
-}
 
 # Extend the include_controls_list if use_only_these_controls_list is given
 if (exists("use_only_these_controls_list")) {
